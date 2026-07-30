@@ -133,7 +133,7 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: "0.75rem 0.5rem", overflowY: "auto" }}>
+        <nav style={{ flex: 1, minHeight: 0, padding: "0.75rem 0.5rem", overflowY: "auto" }}>
           {(() => {
             let lastGroup = "";
             return navItems.map(({ href, icon: Icon, label, group }) => {
@@ -240,6 +240,7 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
             top: 0;
             left: 0;
             height: 100vh;
+            height: 100dvh;
             transform: translateX(-100%);
           }
           .sidebar-open {
