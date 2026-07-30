@@ -1,22 +1,23 @@
 "use client";
-import { useState, useEffect } from "react";
-import { MdAdd, MdCheck, MdDelete, MdShoppingCart, MdClose, MdHistory, MdStore } from "react-icons/md";
+import { useState } from "react";
+import { MdAdd, MdCheck, MdDelete, MdClose, MdHistory, MdStore, MdEdit } from "react-icons/md";
 
 interface Item {
   id: string;
   name: string;
   quantity: number;
   unit: string;
+  unitPrice?: number;
   checked: boolean;
 }
 
 const initialItems: Item[] = [
-  { id: "1", name: "Arroz",          quantity: 5, unit: "kg",   checked: false },
-  { id: "2", name: "Feijão",         quantity: 2, unit: "kg",   checked: false },
-  { id: "3", name: "Leite",          quantity: 6, unit: "L",    checked: false },
-  { id: "4", name: "Sabão em pó",    quantity: 2, unit: "kg",   checked: false },
-  { id: "5", name: "Pão de forma",   quantity: 2, unit: "unid", checked: true  },
-  { id: "6", name: "Queijo",         quantity: 1, unit: "unid", checked: true  },
+  { id: "1", name: "Arroz",          quantity: 5, unit: "kg",   unitPrice: 6.5,  checked: false },
+  { id: "2", name: "Feijão",         quantity: 2, unit: "kg",   unitPrice: 8.9,  checked: false },
+  { id: "3", name: "Leite",          quantity: 6, unit: "L",    unitPrice: 4.79, checked: false },
+  { id: "4", name: "Sabão em pó",    quantity: 2, unit: "kg",   unitPrice: 15,   checked: false },
+  { id: "5", name: "Pão de forma",   quantity: 2, unit: "unid", unitPrice: 8.5,  checked: true  },
+  { id: "6", name: "Queijo",         quantity: 1, unit: "unid", unitPrice: 22,   checked: true  },
 ];
 
 const mockHistory = [
@@ -25,14 +26,26 @@ const mockHistory = [
   { id: "3", date: "2026-05-20", store: "Atacadão",  items: 35, total: 623.40 },
 ];
 
+function formatMoney(value: number) {
+  return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function itemTotal(item: Item) {
+  return (item.unitPrice ?? 0) * item.quantity;
+}
+
 export default function ComprasPage() {
   const [items, setItems]         = useState<Item[]>(initialItems);
   const [addModal, setAddModal]   = useState(false);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [toast, setToast]         = useState("");
 
   const pending  = items.filter((i) => !i.checked);
   const inCart   = items.filter((i) => i.checked);
+
+  const totalGeral = items.reduce((sum, i) => sum + itemTotal(i), 0);
+  const totalCarrinho = inCart.reduce((sum, i) => sum + itemTotal(i), 0);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -52,14 +65,20 @@ export default function ComprasPage() {
   }
 
   function clearCart() {
+    showToast(`Carrinho limpo · total R$ ${formatMoney(totalCarrinho)}`);
     setItems((prev) => prev.filter((i) => !i.checked));
-    showToast("Carrinho limpo ✓");
   }
 
-  function addItem(name: string, quantity: number, unit: string) {
-    setItems((prev) => [...prev, { id: Date.now().toString(), name, quantity, unit, checked: false }]);
+  function addItem(name: string, quantity: number, unit: string, unitPrice?: number) {
+    setItems((prev) => [...prev, { id: Date.now().toString(), name, quantity, unit, unitPrice, checked: false }]);
     setAddModal(false);
     showToast(`✓ "${name}" adicionado!`);
+  }
+
+  function updateItem(id: string, name: string, quantity: number, unit: string, unitPrice?: number) {
+    setItems((prev) => prev.map((i) => i.id === id ? { ...i, name, quantity, unit, unitPrice } : i));
+    setEditingItem(null);
+    showToast(`"${name}" atualizado`);
   }
 
   if (showHistory) {
@@ -86,7 +105,7 @@ export default function ComprasPage() {
                 </div>
               </div>
               <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>
-                R$ {h.total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                R$ {formatMoney(h.total)}
               </div>
             </div>
           ))}
@@ -133,6 +152,29 @@ export default function ComprasPage() {
           </button>
         </div>
       </div>
+
+      {/* Totais */}
+      {items.length > 0 && (
+        <div className="card" style={{ display: "flex", padding: "1rem 1.25rem", marginBottom: "1.25rem", gap: "1rem" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.25rem" }}>
+              Total no carrinho
+            </div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--brand)" }}>
+              R$ {formatMoney(totalCarrinho)}
+            </div>
+          </div>
+          <div style={{ width: 1, background: "var(--border-light)" }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.25rem" }}>
+              Total estimado da lista
+            </div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--text-primary)" }}>
+              R$ {formatMoney(totalGeral)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Progresso visual */}
       {items.length > 0 && (
@@ -195,6 +237,7 @@ export default function ComprasPage() {
                 item={item}
                 onCheck={() => toggleCheck(item.id)}
                 onRemove={() => removeItem(item.id)}
+                onEdit={() => setEditingItem(item)}
                 last={i === pending.length - 1}
               />
             ))}
@@ -237,6 +280,7 @@ export default function ComprasPage() {
                 item={item}
                 onCheck={() => toggleCheck(item.id)}
                 onRemove={() => removeItem(item.id)}
+                onEdit={() => setEditingItem(item)}
                 last={i === inCart.length - 1}
               />
             ))}
@@ -259,19 +303,31 @@ export default function ComprasPage() {
 
       {/* Modal de adicionar */}
       {addModal && (
-        <AddModal onClose={() => setAddModal(false)} onAdd={addItem} />
+        <ItemModal onClose={() => setAddModal(false)} onSave={addItem} />
+      )}
+
+      {/* Modal de editar */}
+      {editingItem && (
+        <ItemModal
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSave={(name, qty, unit, unitPrice) => updateItem(editingItem.id, name, qty, unit, unitPrice)}
+        />
       )}
     </div>
   );
 }
 
 /* ── Linha de item ─────────────────────────────────────── */
-function ItemRow({ item, onCheck, onRemove, last }: {
+function ItemRow({ item, onCheck, onRemove, onEdit, last }: {
   item: Item;
   onCheck: () => void;
   onRemove: () => void;
+  onEdit: () => void;
   last: boolean;
 }) {
+  const hasPrice = !!item.unitPrice;
+
   return (
     <div style={{
       display: "flex",
@@ -299,20 +355,45 @@ function ItemRow({ item, onCheck, onRemove, last }: {
         {item.checked && <MdCheck size={22} color="white" />}
       </button>
 
-      {/* Nome e quantidade */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* Nome, quantidade e valores — toca para editar */}
+      <button
+        onClick={onEdit}
+        aria-label={`Editar ${item.name}`}
+        style={{
+          flex: 1, minWidth: 0, textAlign: "left",
+          background: "none", border: "none", cursor: "pointer", padding: 0,
+          display: "flex", flexDirection: "column",
+        }}
+      >
         <div style={{
           fontSize: "1rem", fontWeight: 600,
           color: item.checked ? "var(--text-muted)" : "var(--text-primary)",
           textDecoration: item.checked ? "line-through" : "none",
           marginBottom: "0.1rem",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           {item.name}
         </div>
-        <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-          {item.quantity} {item.unit}
+        <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          <span>{item.quantity} {item.unit}</span>
+          {hasPrice && <span>· R$ {formatMoney(item.unitPrice!)}/{item.unit}</span>}
+          {hasPrice && <span style={{ fontWeight: 700, color: "var(--text-secondary)" }}>= R$ {formatMoney(itemTotal(item))}</span>}
         </div>
-      </div>
+      </button>
+
+      {/* Editar */}
+      <button
+        onClick={onEdit}
+        aria-label={`Editar ${item.name}`}
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          color: "var(--text-muted)", padding: "0.5rem",
+          display: "flex", alignItems: "center", borderRadius: "8px",
+          flexShrink: 0,
+        }}
+      >
+        <MdEdit size={18} />
+      </button>
 
       {/* Remover */}
       <button
@@ -331,17 +412,26 @@ function ItemRow({ item, onCheck, onRemove, last }: {
   );
 }
 
-/* ── Modal de adicionar ────────────────────────────────── */
-function AddModal({ onClose, onAdd }: {
+/* ── Modal de adicionar/editar ─────────────────────────── */
+function ItemModal({ item, onClose, onSave }: {
+  item?: Item;
   onClose: () => void;
-  onAdd: (name: string, qty: number, unit: string) => void;
+  onSave: (name: string, qty: number, unit: string, unitPrice?: number) => void;
 }) {
-  const [name, setName]   = useState("");
-  const [qty, setQty]     = useState(1);
-  const [unit, setUnit]   = useState("unid");
-  const valid = name.trim().length > 0;
+  const [name, setName]           = useState(item?.name ?? "");
+  const [qty, setQty]             = useState(item?.quantity ?? 1);
+  const [unit, setUnit]           = useState(item?.unit ?? "unid");
+  const [priceInput, setPriceInput] = useState(item?.unitPrice != null ? String(item.unitPrice) : "");
+  const valid = name.trim().length > 0 && qty > 0;
 
   const units = ["unid", "kg", "g", "L", "ml", "cx", "pct"];
+  const unitPrice = priceInput.trim() === "" ? undefined : Number(priceInput.replace(",", "."));
+  const subtotal = unitPrice != null && !isNaN(unitPrice) ? unitPrice * qty : undefined;
+
+  function save() {
+    if (!valid) return;
+    onSave(name.trim(), qty, unit, unitPrice != null && !isNaN(unitPrice) ? unitPrice : undefined);
+  }
 
   return (
     <div
@@ -358,6 +448,8 @@ function AddModal({ onClose, onAdd }: {
         borderRadius: "24px 24px 0 0",
         width: "100%", maxWidth: 520,
         padding: "1.5rem 1.5rem 2rem",
+        maxHeight: "90vh",
+        overflowY: "auto",
       }}>
         {/* Handle */}
         <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.5rem" }} />
@@ -365,7 +457,7 @@ function AddModal({ onClose, onAdd }: {
         {/* Título */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--text-primary)" }}>
-            O que você precisa comprar?
+            {item ? "Editar item" : "O que você precisa comprar?"}
           </h2>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.25rem" }}>
             <MdClose size={22} />
@@ -383,7 +475,7 @@ function AddModal({ onClose, onAdd }: {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && valid && onAdd(name.trim(), qty, unit)}
+              onKeyDown={(e) => e.key === "Enter" && save()}
               placeholder="Ex: Arroz, Leite, Detergente..."
               className="input-field"
               autoFocus
@@ -394,7 +486,7 @@ function AddModal({ onClose, onAdd }: {
           {/* Quantidade */}
           <div>
             <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
-              Quantidade <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
+              Quantidade
             </label>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
               {/* Stepper */}
@@ -428,9 +520,49 @@ function AddModal({ onClose, onAdd }: {
             </div>
           </div>
 
+          {/* Valor unitário */}
+          <div>
+            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
+              Valor unitário <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
+            </label>
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", fontSize: "0.95rem", fontWeight: 600 }}>
+                R$
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                placeholder="0,00"
+                step="0.01"
+                min="0"
+                className="input-field"
+                style={{ paddingLeft: "2.5rem", fontSize: "1rem" }}
+              />
+            </div>
+          </div>
+
+          {/* Subtotal calculado */}
+          {subtotal !== undefined && !isNaN(subtotal) && (
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "0.875rem 1rem", borderRadius: "14px",
+              background: "var(--brand-bg)",
+            }}>
+              <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)", fontWeight: 600 }}>
+                {qty} {unit} × R$ {formatMoney(unitPrice!)}
+              </span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, color: "var(--brand)" }}>
+                R$ {formatMoney(subtotal)}
+              </span>
+            </div>
+          )}
+
           {/* Botões */}
           <button
-            onClick={() => valid && onAdd(name.trim(), qty, unit)}
+            onClick={save}
             disabled={!valid}
             style={{
               width: "100%", padding: "1rem",
@@ -445,7 +577,7 @@ function AddModal({ onClose, onAdd }: {
               boxShadow: valid ? "0 4px 14px rgba(122,171,138,0.35)" : "none",
             }}
           >
-            <MdCheck size={22} /> Adicionar à lista
+            <MdCheck size={22} /> {item ? "Salvar alterações" : "Adicionar à lista"}
           </button>
 
           <button
