@@ -29,7 +29,7 @@ function InviteContent() {
       setLoading(false);
       return;
     }
-    await supabase.from("family_members").insert({ family_id: familyId, user_id: user.id, name, role: "member" });
+    await supabase.from("acalanto_family_members").insert({ family_id: familyId, user_id: user.id, name, role: "member" });
     router.push("/dashboard");
   }
 

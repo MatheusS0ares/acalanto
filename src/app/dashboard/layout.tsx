@@ -16,13 +16,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: member } = await supabase
-        .from("family_members")
-        .select("name, families(name)")
+        .from("acalanto_family_members")
+        .select("name, acalanto_families(name)")
         .eq("user_id", user.id)
         .single();
       if (member) {
         setMemberName(member.name);
-        const fam = member.families as unknown as { name: string } | null;
+        const fam = member.acalanto_families as unknown as { name: string } | null;
         if (fam) setFamilyName(fam.name);
       }
     }

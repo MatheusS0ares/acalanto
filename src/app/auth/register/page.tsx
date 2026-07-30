@@ -44,13 +44,13 @@ export default function RegisterPage() {
     // Criar família no banco
     const slug = familyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     const { data: family, error: familyError } = await supabase
-      .from("families")
+      .from("acalanto_families")
       .insert({ name: familyName, slug: `${slug}-${Date.now()}` })
       .select()
       .single();
 
     if (!familyError && family) {
-      await supabase.from("family_members").insert({
+      await supabase.from("acalanto_family_members").insert({
         family_id: family.id,
         user_id: data.user.id,
         name,

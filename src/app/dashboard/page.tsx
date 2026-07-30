@@ -64,7 +64,7 @@ export default function DashboardPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: member } = await supabase
-        .from("family_members")
+        .from("acalanto_family_members")
         .select("name")
         .eq("user_id", user.id)
         .single();
