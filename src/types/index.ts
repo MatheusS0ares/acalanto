@@ -87,6 +87,7 @@ export interface ShoppingList {
   family_id: string;
   name: string;
   status: "open" | "shopping" | "done";
+  store?: string;
   created_by: string;
   created_at: string;
   finished_at?: string;
@@ -100,10 +101,12 @@ export interface ShoppingItem {
   unit: string;
   estimated_price?: number;
   actual_price?: number;
+  category?: string;
+  emoji?: string;
   checked: boolean;
   checked_by?: string;
   checked_at?: string;
-  category?: string;
+  created_at: string;
 }
 
 // Tarefas

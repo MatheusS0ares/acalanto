@@ -6,6 +6,7 @@ import {
   MdPerson, MdClose, MdCheck, MdVisibility, MdVisibilityOff,
 } from "react-icons/md";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 function Toast({ msg, onDone }: { msg: string; onDone: () => void }) {
   setTimeout(onDone, 2500);
@@ -239,8 +240,10 @@ export default function ConfiguracoesPage() {
 
   function showToast(msg: string) { setToast(msg); }
 
-  function handleLogout() {
-    router.push("/dashboard");
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/auth/login");
   }
 
   return (
