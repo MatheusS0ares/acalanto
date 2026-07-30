@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  MdAdd, MdCheck, MdDelete, MdClose, MdDescription,
-  MdContentCopy, MdShare, MdList,
+  MdAdd, MdCheck, MdClose, MdDescription,
+  MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type { ShoppingList, ShoppingItem } from "@/types";
@@ -29,6 +29,50 @@ function fmt(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function normalize(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+const categoryKeywords: Record<string, string[]> = {
+  "Frutas": ["maracuja", "mexerica", "abacaxi", "maca", "uva", "manga", "banana", "laranja", "limao", "melancia", "mamao", "pera", "morango", "tangerina", "goiaba", "kiwi"],
+  "Laticínios": ["leite", "queijo", "iogurte", "manteiga", "requeijao", "creme de leite"],
+  "Carnes & Proteínas": ["carne", "frango", "peixe", "linguica", "bacon", "hamburguer", "salsicha", "presunto", "file", "costela"],
+  "Snacks & Guloseimas": ["pipoca", "biscoito", "bolacha", "chocolate", "bala", "gelatina", "salgadinho", "bolinho", "refrigerante", "doce", "monster", "energetico", "refri"],
+  "Limpeza": ["sabao", "desinfetante", "detergente", "sanitaria", "amaciante", "bucha", "esponja", "papel toalha", "papel higienico", "alcool", "veja"],
+  "Mercearia": ["arroz", "feijao", "macarrao", "farinha", "acucar", "sal", "oleo", "molho", "extrato", "cafe", "achocolatado", "nescau", "pao", "sardinha", "atum", "ovo"],
+};
+
+function guessCategory(name: string): string {
+  const n = normalize(name);
+  const words = n.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const [cat, keywords] of Object.entries(categoryKeywords)) {
+    for (const kw of keywords) {
+      if (kw.includes(" ")) { if (n.includes(kw)) return cat; continue; }
+      if (words.some((w) => w === kw || w === `${kw}s`)) return cat;
+    }
+  }
+  return "Outros";
+}
+
+interface BulkRow {
+  name: string;
+  quantity: number;
+  category: string;
+}
+
+function parseBulkText(text: string): BulkRow[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s*[xX]?\s+(.+)/);
+      const quantity = match ? parseInt(match[1], 10) : 1;
+      const name = match ? match[2].trim() : line;
+      return { name, quantity, category: guessCategory(name) };
+    });
+}
+
 export default function ComprasPage() {
   const [loading, setLoading] = useState(true);
   const [familyId, setFamilyId] = useState<string | null>(null);
@@ -51,6 +95,13 @@ export default function ComprasPage() {
 
   const [newListModal, setNewListModal] = useState(false);
   const [newListName, setNewListName] = useState("");
+
+  const [bulkModal, setBulkModal] = useState(false);
+  const [bulkStep, setBulkStep] = useState<"paste" | "review">("paste");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkListId, setBulkListId] = useState("");
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const [reportModal, setReportModal] = useState(false);
   const [reportText, setReportText] = useState("");
@@ -207,6 +258,51 @@ export default function ComprasPage() {
     }
     setNewListName("");
     setNewListModal(false);
+  }
+
+  function openBulkModal() {
+    setBulkText("");
+    setBulkRows([]);
+    setBulkStep("paste");
+    setBulkListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? ""));
+    setBulkModal(true);
+  }
+
+  function analyzeBulkText() {
+    const rows = parseBulkText(bulkText);
+    if (!rows.length) return;
+    setBulkRows(rows);
+    setBulkStep("review");
+  }
+
+  function updateBulkRow(index: number, patch: Partial<BulkRow>) {
+    setBulkRows((prev) => prev.map((r, i) => i === index ? { ...r, ...patch } : r));
+  }
+
+  function removeBulkRow(index: number) {
+    setBulkRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function confirmBulkAdd() {
+    if (!bulkRows.length || !bulkListId) return;
+    setBulkSaving(true);
+    const supabase = createClient();
+    const rows = bulkRows.map((r) => ({
+      list_id: bulkListId,
+      name: r.name,
+      quantity: r.quantity,
+      unit: "unid",
+      category: r.category,
+      emoji: categoryMap.get(r.category)?.emoji ?? "📦",
+    }));
+    const { data, error } = await supabase.from("acalanto_shopping_items").insert(rows).select();
+    setBulkSaving(false);
+
+    if (!error && data) {
+      setItems((prev) => [...prev, ...data]);
+      showToast(`✓ ${data.length} itens adicionados!`);
+    }
+    setBulkModal(false);
   }
 
   function generateReport() {
@@ -382,18 +478,31 @@ export default function ComprasPage() {
         ))}
       </div>
 
-      {/* Botão adicionar */}
-      <button
-        onClick={() => { setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? "")); setAddModal(true); }}
-        style={{
-          width: "100%", padding: "1rem", borderRadius: "16px", background: "var(--brand)",
-          color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center",
-          justifyContent: "center", gap: "0.6rem", fontSize: "1.02rem", fontWeight: 800,
-          marginBottom: "1.5rem", boxShadow: "0 4px 16px rgba(122,171,138,0.35)",
-        }}
-      >
-        <MdAdd size={22} /> Adicionar item
-      </button>
+      {/* Botões adicionar */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.5rem" }}>
+        <button
+          onClick={() => { setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? "")); setAddModal(true); }}
+          style={{
+            width: "100%", padding: "1rem", borderRadius: "16px", background: "var(--brand)",
+            color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center",
+            justifyContent: "center", gap: "0.6rem", fontSize: "1.02rem", fontWeight: 800,
+            boxShadow: "0 4px 16px rgba(122,171,138,0.35)",
+          }}
+        >
+          <MdAdd size={22} /> Adicionar item
+        </button>
+        <button
+          onClick={openBulkModal}
+          style={{
+            width: "100%", padding: "0.8rem", borderRadius: "16px", background: "var(--bg-secondary)",
+            color: "var(--text-secondary)", border: "1.5px solid var(--border)", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+            fontSize: "0.9rem", fontWeight: 700,
+          }}
+        >
+          <MdContentPaste size={18} /> Colar lista (vários itens de uma vez)
+        </button>
+      </div>
 
       {/* Itens por categoria */}
       {categories.map((cat) => {
@@ -616,6 +725,106 @@ export default function ComprasPage() {
             <button onClick={addList} disabled={!newListName.trim()} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: newListName.trim() ? 1 : 0.5 }}>
               <MdCheck size={18} /> Criar lista
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal colar lista */}
+      {bulkModal && (
+        <div onClick={(e) => e.target === e.currentTarget && setBulkModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: "var(--bg-card)", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 560, padding: "1.5rem 1.5rem 2rem", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem", flexShrink: 0 }} />
+
+            {bulkStep === "paste" ? (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <h2 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>📋 Colar lista</h2>
+                  <button onClick={() => setBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+                </div>
+                <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                  Cole o texto com um item por linha. Pode começar com a quantidade, tipo &quot;3 maracujá&quot;. Depois você revisa antes de salvar.
+                </p>
+                <textarea
+                  autoFocus
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={"Pipoca\n3 maracujá\nLeite em pó\nSabão em pó\n..."}
+                  style={{
+                    width: "100%", minHeight: 220, background: "var(--bg-secondary)", color: "var(--text-primary)",
+                    border: "1.5px solid var(--border)", borderRadius: 12, padding: "0.9rem", fontSize: "0.9rem",
+                    lineHeight: 1.6, resize: "vertical", outline: "none", marginBottom: "1rem", fontFamily: "inherit",
+                  }}
+                />
+                <button onClick={analyzeBulkText} disabled={!bulkText.trim()} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: bulkText.trim() ? 1 : 0.5 }}>
+                  Analisar lista
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                  <button onClick={() => setBulkStep("paste")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem", padding: 0 }}>
+                    <MdArrowBack size={16} /> Voltar
+                  </button>
+                  <button onClick={() => setBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+                </div>
+                <h2 style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+                  Confira antes de salvar
+                </h2>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                  {bulkRows.length} {bulkRows.length === 1 ? "item" : "itens"} — ajuste categoria, quantidade ou remova algum antes de confirmar.
+                </p>
+
+                <div style={{ marginBottom: "0.9rem" }}>
+                  <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.35rem" }}>Adicionar em qual lista?</label>
+                  <select value={bulkListId} onChange={(e) => setBulkListId(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
+                    {lists.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                </div>
+
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                  {bulkRows.map((row, idx) => {
+                    const cat = categoryMap.get(row.category);
+                    return (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.6rem", borderRadius: 10, background: "var(--bg-secondary)" }}>
+                        <span style={{ fontSize: "1rem", flexShrink: 0 }}>{cat?.emoji ?? "📦"}</span>
+                        <input
+                          type="text" value={row.name} onChange={(e) => updateBulkRow(idx, { name: e.target.value })}
+                          style={{ flex: 1, minWidth: 0, background: "none", border: "none", outline: "none", color: "var(--text-primary)", fontSize: "0.88rem", fontWeight: 600 }}
+                        />
+                        <input
+                          type="number" min={1} value={row.quantity}
+                          onChange={(e) => updateBulkRow(idx, { quantity: Math.max(1, Number(e.target.value)) })}
+                          style={{ width: 42, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-primary)", fontSize: "0.8rem", textAlign: "center", padding: "0.2rem" }}
+                        />
+                        <select
+                          value={row.category} onChange={(e) => updateBulkRow(idx, { category: e.target.value })}
+                          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, color: cat?.accent ?? "var(--text-muted)", fontSize: "0.72rem", fontWeight: 700, padding: "0.2rem", maxWidth: 90 }}
+                        >
+                          {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                        </select>
+                        <button onClick={() => removeBulkRow(idx)} aria-label="Remover" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem", flexShrink: 0 }}>
+                          <MdClose size={16} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {bulkRows.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                      Nenhum item sobrou. Volte e cole a lista de novo.
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={confirmBulkAdd}
+                  disabled={!bulkRows.length || !bulkListId || bulkSaving}
+                  className="btn-primary"
+                  style={{ width: "100%", justifyContent: "center", opacity: bulkRows.length && bulkListId ? 1 : 0.5, flexShrink: 0 }}
+                >
+                  <MdCheck size={18} /> {bulkSaving ? "Salvando..." : `Adicionar ${bulkRows.length} ${bulkRows.length === 1 ? "item" : "itens"}`}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
