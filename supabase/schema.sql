@@ -290,6 +290,7 @@ $$ LANGUAGE sql SECURITY DEFINER;
 CREATE POLICY "acalanto_family_members_select" ON acalanto_family_members FOR SELECT USING (family_id = acalanto_get_user_family_id());
 CREATE POLICY "acalanto_family_members_insert" ON acalanto_family_members FOR INSERT WITH CHECK (family_id = acalanto_get_user_family_id() OR user_id = auth.uid());
 CREATE POLICY "acalanto_family_members_update" ON acalanto_family_members FOR UPDATE USING (family_id = acalanto_get_user_family_id());
+CREATE POLICY "acalanto_family_members_delete" ON acalanto_family_members FOR DELETE USING (family_id = acalanto_get_user_family_id());
 
 CREATE POLICY "acalanto_families_select" ON acalanto_families FOR SELECT USING (id = acalanto_get_user_family_id());
 CREATE POLICY "acalanto_families_insert" ON acalanto_families FOR INSERT WITH CHECK (TRUE);
