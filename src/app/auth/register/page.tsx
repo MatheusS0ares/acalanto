@@ -43,19 +43,28 @@ export default function RegisterPage() {
 
     // Criar família no banco
     const slug = familyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    const { data: family, error: familyError } = await supabase
+    const familyId = crypto.randomUUID();
+    const { error: familyError } = await supabase
       .from("acalanto_families")
-      .insert({ name: familyName, slug: `${slug}-${Date.now()}` })
-      .select()
-      .single();
+      .insert({ id: familyId, name: familyName, slug: `${slug}-${Date.now()}` });
 
-    if (!familyError && family) {
-      await supabase.from("acalanto_family_members").insert({
-        family_id: family.id,
-        user_id: data.user.id,
-        name,
-        role: "owner",
-      });
+    if (familyError) {
+      setError("Conta criada, mas houve um erro ao criar a família. Faça login para tentar de novo.");
+      setLoading(false);
+      return;
+    }
+
+    const { error: memberError } = await supabase.from("acalanto_family_members").insert({
+      family_id: familyId,
+      user_id: data.user.id,
+      name,
+      role: "owner",
+    });
+
+    if (memberError) {
+      setError("Conta criada, mas houve um erro ao vincular sua família. Faça login para tentar de novo.");
+      setLoading(false);
+      return;
     }
 
     router.push("/dashboard");

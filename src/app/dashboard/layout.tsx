@@ -21,20 +21,19 @@ function FamilySetupForm({ user, onDone }: { user: User; onDone: () => void }) {
     const supabase = createClient();
 
     const slug = familyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    const { data: family, error: familyError } = await supabase
+    const familyId = crypto.randomUUID();
+    const { error: familyError } = await supabase
       .from("acalanto_families")
-      .insert({ name: familyName.trim(), slug: `${slug}-${Date.now()}` })
-      .select()
-      .single();
+      .insert({ id: familyId, name: familyName.trim(), slug: `${slug}-${Date.now()}` });
 
-    if (familyError || !family) {
+    if (familyError) {
       setError("Erro ao criar família. Tente novamente.");
       setLoading(false);
       return;
     }
 
     const { error: memberError } = await supabase.from("acalanto_family_members").insert({
-      family_id: family.id,
+      family_id: familyId,
       user_id: user.id,
       name: name.trim(),
       role: "owner",

@@ -174,7 +174,7 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
         </nav>
 
         {/* Footer */}
-        <div style={{ padding: "0.75rem 0.5rem", borderTop: "1px solid var(--border)" }}>
+        <div className="sidebar-footer" style={{ padding: "0.75rem 0.5rem", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
           <Link
             href="/dashboard/familia"
             onClick={onClose}
@@ -240,11 +240,18 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
             top: 0;
             left: 0;
             height: 100vh;
+            height: -webkit-fill-available;
             height: 100dvh;
+            max-height: 100dvh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
             transform: translateX(-100%);
           }
           .sidebar-open {
             transform: translateX(0) !important;
+          }
+          .sidebar-footer {
+            padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)) !important;
           }
           .mobile-overlay { display: block !important; }
           .close-btn { display: block !important; }
