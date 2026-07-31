@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { MdPersonAdd, MdEmail, MdContentCopy, MdCheck, MdEdit, MdDelete, MdClose } from "react-icons/md";
+import {
+  MdPersonAdd, MdEmail, MdContentCopy, MdCheck, MdEdit, MdDelete, MdClose,
+  MdVisibility, MdVisibilityOff, MdAutorenew, MdLock, MdPerson,
+} from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type { Family, FamilyMember } from "@/types";
 
@@ -40,6 +43,15 @@ export default function FamiliaPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  const [newMemberName, setNewMemberName] = useState("");
+  const [newMemberEmail, setNewMemberEmail] = useState("");
+  const [newMemberPassword, setNewMemberPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [creatingMember, setCreatingMember] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createdCredentials, setCreatedCredentials] = useState<{ name: string; email: string; password: string } | null>(null);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -95,6 +107,48 @@ export default function FamiliaPage() {
     if (error) { setToast("Erro ao remover membro"); return; }
     setMembers((prev) => prev.filter((m) => m.id !== id));
     setToast("Membro removido");
+  }
+
+  function generatePassword(length = 12) {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$";
+    return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  }
+
+  async function createMember() {
+    setCreateError("");
+    if (!newMemberName.trim() || !newMemberEmail.trim() || newMemberPassword.length < 8) {
+      setCreateError("Preencha nome, e-mail e uma senha com pelo menos 8 caracteres.");
+      return;
+    }
+    setCreatingMember(true);
+    const res = await fetch("/api/family/create-member", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newMemberName.trim(), email: newMemberEmail.trim(), password: newMemberPassword }),
+    });
+    const data = await res.json();
+    setCreatingMember(false);
+
+    if (!res.ok) {
+      setCreateError(data.error ?? "Erro ao criar conta.");
+      return;
+    }
+
+    setCreatedCredentials({ name: newMemberName.trim(), email: newMemberEmail.trim(), password: newMemberPassword });
+    setNewMemberName("");
+    setNewMemberEmail("");
+    setNewMemberPassword("");
+    setShowPassword(false);
+    load();
+  }
+
+  function copyCredentials() {
+    if (!createdCredentials) return;
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const text = `Seu acesso ao ${family?.name ?? "Acalanto"}:\n\nSite: ${origin}\nE-mail: ${createdCredentials.email}\nSenha: ${createdCredentials.password}`;
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCredentialsCopied(true);
+    setTimeout(() => setCredentialsCopied(false), 2000);
   }
 
   const canManage = myRole === "owner" || myRole === "admin";
@@ -250,9 +304,97 @@ export default function FamiliaPage() {
         })}
       </div>
 
+      {/* Criar conta de membro */}
+      {canManage && (
+        <>
+          <h2 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
+            Criar conta de membro
+          </h2>
+          <div className="card" style={{ padding: "1.25rem", marginBottom: "2rem" }}>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1.1rem" }}>
+              Você define o e-mail e a senha — a pessoa só precisa entrar, sem se cadastrar.
+            </p>
+
+            {createdCredentials ? (
+              <div>
+                <div style={{ background: "var(--brand-bg)", border: "1px solid var(--brand-border)", borderRadius: 12, padding: "1rem", marginBottom: "1rem" }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: "0.5rem" }}>
+                    ✓ Conta de {createdCredentials.name} criada!
+                  </div>
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.8 }}>
+                    <div><strong>E-mail:</strong> {createdCredentials.email}</div>
+                    <div><strong>Senha:</strong> {createdCredentials.password}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "0.6rem" }}>
+                  <button onClick={copyCredentials} className="btn-primary" style={{ flex: 1, justifyContent: "center" }}>
+                    {credentialsCopied ? <MdCheck size={16} /> : <MdContentCopy size={16} />}
+                    {credentialsCopied ? "Copiado!" : "Copiar dados de acesso"}
+                  </button>
+                  <button onClick={() => setCreatedCredentials(null)} className="btn-secondary" style={{ whiteSpace: "nowrap" }}>
+                    Criar outra
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+                <div style={{ position: "relative" }}>
+                  <MdPerson size={16} style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                  <input
+                    type="text" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)}
+                    placeholder="Nome (ex: Morgana)" className="input-field" style={{ paddingLeft: "2.25rem" }}
+                  />
+                </div>
+                <div style={{ position: "relative" }}>
+                  <MdEmail size={16} style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                  <input
+                    type="email" value={newMemberEmail} onChange={(e) => setNewMemberEmail(e.target.value)}
+                    placeholder="email@exemplo.com" className="input-field" style={{ paddingLeft: "2.25rem" }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <MdLock size={16} style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                    <input
+                      type={showPassword ? "text" : "password"} value={newMemberPassword}
+                      onChange={(e) => setNewMemberPassword(e.target.value)}
+                      placeholder="Senha (mín. 8 caracteres)" className="input-field"
+                      style={{ paddingLeft: "2.25rem", paddingRight: "2.25rem" }}
+                    />
+                    <button
+                      type="button" onClick={() => setShowPassword(!showPassword)}
+                      style={{ position: "absolute", right: "0.75rem", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}
+                    >
+                      {showPassword ? <MdVisibilityOff size={16} /> : <MdVisibility size={16} />}
+                    </button>
+                  </div>
+                  <button
+                    type="button" onClick={() => { setNewMemberPassword(generatePassword()); setShowPassword(true); }}
+                    className="btn-secondary" aria-label="Gerar senha" style={{ padding: "0.65rem" }}
+                  >
+                    <MdAutorenew size={18} />
+                  </button>
+                </div>
+
+                {createError && (
+                  <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.5rem", padding: "0.65rem 0.9rem", fontSize: "0.82rem", color: "#f87171" }}>
+                    {createError}
+                  </div>
+                )}
+
+                <button onClick={createMember} disabled={creatingMember} className="btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                  <MdPersonAdd size={16} />
+                  {creatingMember ? "Criando..." : "Criar conta"}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Convidar */}
       <h2 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
-        Convidar membro
+        Ou envie um convite
       </h2>
       <div className="card" style={{ padding: "1.25rem" }}>
         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
