@@ -154,21 +154,48 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg-primary)" }}>
+      <img
+        src="/family-bg.png"
+        alt=""
+        aria-hidden
+        className="family-watermark"
+        style={{
+          position: "fixed",
+          bottom: 0,
+          right: 0,
+          width: 260,
+          pointerEvents: "none",
+          zIndex: 0,
+          userSelect: "none",
+        }}
+      />
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} familyName={familyName} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", zIndex: 1 }}>
         <TopBar onMenuClick={() => setSidebarOpen(true)} memberName={memberName} />
         <main
           style={{
             flex: 1,
             overflowY: "auto",
             padding: "1.5rem",
-            background: "var(--bg-primary)",
           }}
         >
           {children}
         </main>
       </div>
+      <style>{`
+        .family-watermark {
+          opacity: 0.5;
+          -webkit-mask-image: radial-gradient(circle at bottom right, black 25%, transparent 70%);
+          mask-image: radial-gradient(circle at bottom right, black 25%, transparent 70%);
+        }
+        [data-theme="light"] .family-watermark {
+          opacity: 0.85;
+        }
+        @media (max-width: 640px) {
+          .family-watermark { width: 170px; }
+        }
+      `}</style>
     </div>
   );
 }
