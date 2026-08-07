@@ -75,6 +75,7 @@ function parseBulkText(text: string): BulkRow[] {
 
 export default function ComprasPage() {
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [lists, setLists] = useState<ShoppingList[]>([]);
@@ -119,16 +120,30 @@ export default function ComprasPage() {
 
   async function load() {
     setLoading(true);
+    setLoadFailed(false);
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setLoading(false); return; }
 
-    const { data: me } = await supabase
-      .from("acalanto_family_members")
-      .select("id, family_id")
-      .eq("user_id", user.id)
-      .single();
-    if (!me) { setLoading(false); return; }
+    // getUser()/a busca do membro podem falhar transitoriamente em redes ruins —
+    // tenta algumas vezes antes de desistir.
+    let user = null;
+    for (let attempt = 0; attempt < 3 && !user; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 500));
+      const { data } = await supabase.auth.getUser();
+      user = data.user;
+    }
+    if (!user) { setLoading(false); setLoadFailed(true); return; }
+
+    let me: { id: string; family_id: string } | null = null;
+    for (let attempt = 0; attempt < 3 && !me; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 500));
+      const { data } = await supabase
+        .from("acalanto_family_members")
+        .select("id, family_id")
+        .eq("user_id", user.id)
+        .single();
+      me = data;
+    }
+    if (!me) { setLoading(false); setLoadFailed(true); return; }
 
     setFamilyId(me.family_id);
     setMemberId(me.id);
@@ -142,13 +157,18 @@ export default function ComprasPage() {
     if (listsError) showToast("Erro ao carregar listas — tente recarregar a página");
 
     if (!listsError && (!listRows || listRows.length === 0)) {
-      const { data: created, error: createListError } = await supabase
+      const newListId = crypto.randomUUID();
+      const { error: createListError } = await supabase
         .from("acalanto_shopping_lists")
-        .insert({ family_id: me.family_id, name: "Nossa lista", created_by: me.id })
-        .select()
-        .single();
-      if (createListError) showToast("Erro ao criar a lista inicial — toque em + pra tentar de novo");
-      listRows = created ? [created] : [];
+        .insert({ id: newListId, family_id: me.family_id, name: "Nossa lista", created_by: me.id });
+      if (createListError) {
+        showToast("Erro ao criar a lista inicial — toque em + pra tentar de novo");
+      } else {
+        listRows = [{
+          id: newListId, family_id: me.family_id, name: "Nossa lista",
+          status: "open", created_by: me.id, created_at: new Date().toISOString(),
+        }];
+      }
     }
 
     setLists(listRows ?? []);
@@ -389,6 +409,23 @@ export default function ComprasPage() {
     return (
       <div style={{ maxWidth: 700, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
         Carregando sua lista...
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div style={{ maxWidth: 700, margin: "0 auto", padding: "2rem", textAlign: "center" }}>
+        <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>📶</div>
+        <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.4rem" }}>
+          Não conseguimos carregar seus dados
+        </div>
+        <div style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>
+          Pode ter sido a conexão. Toque para tentar de novo.
+        </div>
+        <button onClick={load} className="btn-primary" style={{ margin: "0 auto" }}>
+          Tentar de novo
+        </button>
       </div>
     );
   }
