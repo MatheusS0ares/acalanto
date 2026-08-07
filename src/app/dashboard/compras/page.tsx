@@ -2,10 +2,11 @@
 import { useEffect, useState } from "react";
 import {
   MdAdd, MdCheck, MdClose, MdDescription, MdEdit,
-  MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack,
+  MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack, MdBarChart,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type { ShoppingList, ShoppingItem } from "@/types";
+import { AnalisesCompras } from "@/components/compras/AnalisesCompras";
 
 interface Category {
   name: string;
@@ -80,6 +81,7 @@ export default function ComprasPage() {
   const [memberId, setMemberId] = useState<string | null>(null);
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [view, setView] = useState<"lista" | "analises">("lista");
 
   const [listFilter, setListFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "done">("all");
@@ -493,18 +495,52 @@ export default function ComprasPage() {
             🛒 Lista de Compras
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
-            Adicione durante a semana, confira ao fazer as compras
+            {view === "lista" ? "Adicione durante a semana, confira ao fazer as compras" : "Pra onde está indo o dinheiro do mercado"}
           </p>
         </div>
+        {view === "lista" && (
+          <button
+            onClick={generateReport}
+            className="btn-secondary"
+            style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}
+          >
+            <MdDescription size={16} /> Relatório
+          </button>
+        )}
+      </div>
+
+      {/* Alternar Lista / Análises */}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
         <button
-          onClick={generateReport}
-          className="btn-secondary"
-          style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}
+          onClick={() => setView("lista")}
+          style={{
+            flex: 1, padding: "0.55rem 0", borderRadius: 10, border: "none", cursor: "pointer",
+            fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
+            background: view === "lista" ? "var(--brand)" : "var(--bg-secondary)",
+            color: view === "lista" ? "#fff" : "var(--text-muted)",
+          }}
         >
-          <MdDescription size={16} /> Relatório
+          <MdList size={16} /> Lista
+        </button>
+        <button
+          onClick={() => setView("analises")}
+          style={{
+            flex: 1, padding: "0.55rem 0", borderRadius: 10, border: "none", cursor: "pointer",
+            fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
+            background: view === "analises" ? "var(--brand)" : "var(--bg-secondary)",
+            color: view === "analises" ? "#fff" : "var(--text-muted)",
+          }}
+        >
+          <MdBarChart size={16} /> Análises
         </button>
       </div>
 
+      {view === "analises" && (
+        <AnalisesCompras items={items} lists={lists} categories={categories} />
+      )}
+
+      {view === "lista" && (
+      <>
       {/* Total gasto */}
       {totalGasto > 0 && (
         <div className="card" style={{ padding: "1rem 1.25rem", marginBottom: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -750,6 +786,8 @@ export default function ComprasPage() {
           <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--text-primary)", marginTop: "0.4rem" }}>Tudo comprado!</div>
           {totalGasto > 0 && <div style={{ color: "var(--brand)", fontWeight: 700, fontSize: "0.95rem", marginTop: "0.2rem" }}>Total: {fmt(totalGasto)}</div>}
         </div>
+      )}
+      </>
       )}
 
       {/* Modal de preço */}
