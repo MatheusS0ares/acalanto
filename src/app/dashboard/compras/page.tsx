@@ -95,6 +95,7 @@ export default function ComprasPage() {
 
   const [newListModal, setNewListModal] = useState(false);
   const [newListName, setNewListName] = useState("");
+  const [creatingList, setCreatingList] = useState(false);
 
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkStep, setBulkStep] = useState<"paste" | "review">("paste");
@@ -245,22 +246,45 @@ export default function ComprasPage() {
   }
 
   async function addList() {
-    if (!newListName.trim() || !familyId || !memberId) return;
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("acalanto_shopping_lists")
-      .insert({ family_id: familyId, name: newListName.trim(), created_by: memberId })
-      .select()
-      .single();
-
-    if (!error && data) {
-      setLists((prev) => [...prev, data]);
-      setListFilter(data.id);
-      setNewListId(data.id);
-      showToast(`Lista "${newListName.trim()}" criada!`);
+    const trimmed = newListName.trim();
+    if (!trimmed) return;
+    if (!familyId || !memberId) {
+      showToast("Ainda carregando sua família, tente de novo em instantes");
+      return;
     }
-    setNewListName("");
-    setNewListModal(false);
+
+    setCreatingList(true);
+    try {
+      const supabase = createClient();
+      const id = crypto.randomUUID();
+      const { error } = await supabase
+        .from("acalanto_shopping_lists")
+        .insert({ id, family_id: familyId, name: trimmed, created_by: memberId });
+
+      if (error) {
+        showToast("Erro ao criar lista. Tente novamente.");
+        return;
+      }
+
+      const newList: ShoppingList = {
+        id,
+        family_id: familyId,
+        name: trimmed,
+        status: "open",
+        created_by: memberId,
+        created_at: new Date().toISOString(),
+      };
+      setLists((prev) => [...prev, newList]);
+      setListFilter(newList.id);
+      setNewListId(newList.id);
+      showToast(`Lista "${trimmed}" criada!`);
+      setNewListName("");
+      setNewListModal(false);
+    } catch {
+      showToast("Erro ao criar lista. Tente novamente.");
+    } finally {
+      setCreatingList(false);
+    }
   }
 
   function openBulkModal() {
@@ -746,8 +770,8 @@ export default function ComprasPage() {
               placeholder="Ex: Mãe da Morgana, Farmácia..."
               className="input-field" style={{ marginBottom: "1rem" }}
             />
-            <button onClick={addList} disabled={!newListName.trim()} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: newListName.trim() ? 1 : 0.5 }}>
-              <MdCheck size={18} /> Criar lista
+            <button onClick={addList} disabled={!newListName.trim() || creatingList} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: newListName.trim() ? 1 : 0.5 }}>
+              <MdCheck size={18} /> {creatingList ? "Criando..." : "Criar lista"}
             </button>
           </div>
         </div>
