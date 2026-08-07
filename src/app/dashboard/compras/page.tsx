@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  MdAdd, MdCheck, MdClose, MdDescription,
+  MdAdd, MdCheck, MdClose, MdDescription, MdEdit,
   MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
@@ -88,11 +88,13 @@ export default function ComprasPage() {
   const [priceInput, setPriceInput] = useState("");
 
   const [addModal, setAddModal] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newQty, setNewQty] = useState(1);
   const [newUnit, setNewUnit] = useState("unid");
   const [newCategory, setNewCategory] = useState(categories[2].name);
   const [newListId, setNewListId] = useState("");
+  const [savingItem, setSavingItem] = useState(false);
 
   const [newListModal, setNewListModal] = useState(false);
   const [newListName, setNewListName] = useState("");
@@ -240,29 +242,63 @@ export default function ComprasPage() {
     showToast(`"${item.name}" removido`);
   }
 
-  async function addItem() {
+  function openAddItem() {
+    setEditingItemId(null);
+    setNewName(""); setNewQty(1); setNewUnit("unid"); setNewCategory(categories[2].name);
+    setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? ""));
+    setAddModal(true);
+  }
+
+  function openEditItem(item: ShoppingItem) {
+    setEditingItemId(item.id);
+    setNewName(item.name);
+    setNewQty(item.quantity);
+    setNewUnit(item.unit);
+    setNewCategory(item.category ?? categories[2].name);
+    setNewListId(item.list_id);
+    setAddModal(true);
+  }
+
+  function closeItemModal() {
+    setAddModal(false);
+    setEditingItemId(null);
+    setNewName(""); setNewQty(1); setNewUnit("unid"); setNewCategory(categories[2].name);
+  }
+
+  async function saveItem() {
     if (!newName.trim() || !newListId) return;
+    setSavingItem(true);
     const supabase = createClient();
     const cat = categoryMap.get(newCategory);
-    const { data, error } = await supabase
-      .from("acalanto_shopping_items")
-      .insert({
-        list_id: newListId,
-        name: newName.trim(),
-        quantity: newQty,
-        unit: newUnit,
-        category: newCategory,
-        emoji: cat?.emoji ?? "📦",
-      })
-      .select()
-      .single();
+    const name = newName.trim();
 
-    if (!error && data) {
-      setItems((prev) => [...prev, data]);
-      showToast(`✓ "${newName.trim()}" adicionado!`);
+    if (editingItemId) {
+      const patch = {
+        name, quantity: newQty, unit: newUnit,
+        category: newCategory, emoji: cat?.emoji ?? "📦", list_id: newListId,
+      };
+      const { error } = await supabase.from("acalanto_shopping_items").update(patch).eq("id", editingItemId);
+      setSavingItem(false);
+      if (error) { showToast("Erro ao salvar alterações"); return; }
+      setItems((prev) => prev.map((i) => i.id === editingItemId ? { ...i, ...patch } : i));
+      showToast(`"${name}" atualizado`);
+    } else {
+      const id = crypto.randomUUID();
+      const { error } = await supabase.from("acalanto_shopping_items").insert({
+        id, list_id: newListId, name, quantity: newQty, unit: newUnit,
+        category: newCategory, emoji: cat?.emoji ?? "📦",
+      });
+      setSavingItem(false);
+      if (error) { showToast("Erro ao adicionar item"); return; }
+      const newItem: ShoppingItem = {
+        id, list_id: newListId, name, quantity: newQty, unit: newUnit,
+        category: newCategory, emoji: cat?.emoji ?? "📦", checked: false,
+        created_at: new Date().toISOString(),
+      };
+      setItems((prev) => [...prev, newItem]);
+      showToast(`✓ "${name}" adicionado!`);
     }
-    setNewName(""); setNewQty(1); setNewUnit("unid"); setNewCategory(categories[2].name);
-    setAddModal(false);
+    closeItemModal();
   }
 
   async function addList() {
@@ -565,7 +601,7 @@ export default function ComprasPage() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.5rem" }}>
           <button
-            onClick={() => { setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? "")); setAddModal(true); }}
+            onClick={openAddItem}
             style={{
               width: "100%", padding: "1rem", borderRadius: "16px", background: "var(--brand)",
               color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center",
@@ -662,6 +698,13 @@ export default function ComprasPage() {
                   )}
                 </button>
                 <button
+                  onClick={() => openEditItem(item)}
+                  aria-label={`Editar ${item.name}`}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.3rem", flexShrink: 0 }}
+                >
+                  <MdEdit size={16} />
+                </button>
+                <button
                   onClick={() => removeItem(item)}
                   aria-label={`Remover ${item.name}`}
                   style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.3rem", flexShrink: 0 }}
@@ -726,14 +769,16 @@ export default function ComprasPage() {
         </div>
       )}
 
-      {/* Modal adicionar item */}
+      {/* Modal adicionar/editar item */}
       {addModal && (
-        <div onClick={(e) => e.target === e.currentTarget && setAddModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+        <div onClick={(e) => e.target === e.currentTarget && closeItemModal()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
           <div style={{ background: "var(--bg-card)", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 520, padding: "1.5rem 1.5rem 2rem", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem" }} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-              <h2 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>➕ Adicionar item</h2>
-              <button onClick={() => setAddModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+              <h2 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>
+                {editingItemId ? "✏️ Editar item" : "➕ Adicionar item"}
+              </h2>
+              <button onClick={closeItemModal} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -742,14 +787,27 @@ export default function ComprasPage() {
                 <input autoFocus type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ex: Arroz" className="input-field" />
               </div>
 
-              <div style={{ display: "flex", gap: "0.75rem" }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Quantidade</label>
-                  <input type="number" min={1} value={newQty} onChange={(e) => setNewQty(Math.max(1, Number(e.target.value)))} className="input-field" />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Unidade</label>
-                  <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Quantidade</label>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", border: "1.5px solid var(--border)", borderRadius: "12px", overflow: "hidden", flexShrink: 0 }}>
+                    <button
+                      type="button" onClick={() => setNewQty((q) => Math.max(1, q - 1))}
+                      style={{ width: 44, height: 44, border: "none", background: "var(--bg-secondary)", cursor: "pointer", color: "var(--text-primary)", fontSize: "1.3rem", fontWeight: 700 }}
+                    >
+                      −
+                    </button>
+                    <span style={{ width: 48, textAlign: "center", fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                      {newQty}
+                    </span>
+                    <button
+                      type="button" onClick={() => setNewQty((q) => q + 1)}
+                      style={{ width: 44, height: 44, border: "none", background: "var(--bg-secondary)", cursor: "pointer", color: "var(--text-primary)", fontSize: "1.3rem", fontWeight: 700 }}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} className="input-field" style={{ cursor: "pointer", flex: 1 }}>
                     {units.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
@@ -782,8 +840,8 @@ export default function ComprasPage() {
                 </select>
               </div>
 
-              <button onClick={addItem} disabled={!newName.trim()} className="btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: "0.3rem", opacity: newName.trim() ? 1 : 0.5 }}>
-                <MdCheck size={18} /> Adicionar
+              <button onClick={saveItem} disabled={!newName.trim() || savingItem} className="btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: "0.3rem", opacity: newName.trim() ? 1 : 0.5 }}>
+                <MdCheck size={18} /> {savingItem ? "Salvando..." : editingItemId ? "Salvar alterações" : "Adicionar"}
               </button>
             </div>
           </div>
