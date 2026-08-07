@@ -403,7 +403,13 @@ export default function ComprasPage() {
       if (done.length) {
         text += `✅ Comprados (${done.length})\n`;
         done.forEach((i) => {
-          text += `  ${i.emoji ?? "📦"} ${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ""} — ${i.actual_price != null ? fmt(i.actual_price) : "sem valor"}\n`;
+          let priceLabel = "sem valor";
+          if (i.actual_price != null) {
+            priceLabel = i.quantity > 1
+              ? `${fmt(i.actual_price)}/un = ${fmt(i.actual_price * i.quantity)}`
+              : fmt(i.actual_price);
+          }
+          text += `  ${i.emoji ?? "📦"} ${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ""} — ${priceLabel}\n`;
         });
       }
       if (pending.length) {
@@ -685,7 +691,9 @@ export default function ComprasPage() {
                   </div>
                   {item.checked && item.actual_price != null && (
                     <div style={{ fontSize: "0.78rem", color: "var(--brand)", fontWeight: 700, marginTop: "0.1rem" }}>
-                      {fmt(item.actual_price)}
+                      {item.quantity > 1
+                        ? `${fmt(item.actual_price)}/un = ${fmt(item.actual_price * item.quantity)}`
+                        : fmt(item.actual_price)}
                     </div>
                   )}
                   {item.checked && item.actual_price == null && (
@@ -751,8 +759,12 @@ export default function ComprasPage() {
             <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem" }} />
             <div style={{ fontSize: "1.3rem", marginBottom: "0.25rem" }}>{priceModalItem.emoji ?? "📦"}</div>
             <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--text-primary)" }}>{priceModalItem.name}</div>
-            <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1.1rem" }}>Quanto você pagou?</div>
-            <div style={{ display: "flex", alignItems: "center", background: "var(--bg-secondary)", borderRadius: 12, border: "1.5px solid var(--border)", padding: "0.75rem 1rem", marginBottom: "1rem" }}>
+            <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1.1rem" }}>
+              {priceModalItem.quantity > 1
+                ? `Quanto custa cada ${priceModalItem.unit !== "unid" ? priceModalItem.unit : "unidade"}? (você pegou ${priceModalItem.quantity})`
+                : "Quanto você pagou?"}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", background: "var(--bg-secondary)", borderRadius: 12, border: "1.5px solid var(--border)", padding: "0.75rem 1rem", marginBottom: "0.5rem" }}>
               <span style={{ fontSize: "1.05rem", color: "var(--brand)", fontWeight: 700, marginRight: "0.5rem" }}>R$</span>
               <input
                 autoFocus type="number" inputMode="decimal" placeholder="0,00"
@@ -760,6 +772,11 @@ export default function ComprasPage() {
                 onKeyDown={(e) => e.key === "Enter" && savePrice()}
                 style={{ flex: 1, border: "none", background: "transparent", fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)", outline: "none" }}
               />
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "1rem", minHeight: "1.2rem" }}>
+              {priceModalItem.quantity > 1 && !isNaN(parseFloat(priceInput.replace(",", ".")))
+                ? <>{priceModalItem.quantity} × {fmt(parseFloat(priceInput.replace(",", ".")))} = <strong style={{ color: "var(--brand)" }}>{fmt(priceModalItem.quantity * parseFloat(priceInput.replace(",", ".")))}</strong></>
+                : null}
             </div>
             <div style={{ display: "flex", gap: "0.6rem" }}>
               <button onClick={() => setPriceModalItem(null)} className="btn-secondary" style={{ flex: 1, justifyContent: "center" }}>Pular</button>
