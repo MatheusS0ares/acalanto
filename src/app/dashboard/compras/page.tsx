@@ -132,18 +132,21 @@ export default function ComprasPage() {
     setFamilyId(me.family_id);
     setMemberId(me.id);
 
-    let { data: listRows } = await supabase
+    let { data: listRows, error: listsError } = await supabase
       .from("acalanto_shopping_lists")
       .select("*")
       .eq("family_id", me.family_id)
       .order("created_at");
 
-    if (!listRows || listRows.length === 0) {
-      const { data: created } = await supabase
+    if (listsError) showToast("Erro ao carregar listas — tente recarregar a página");
+
+    if (!listsError && (!listRows || listRows.length === 0)) {
+      const { data: created, error: createListError } = await supabase
         .from("acalanto_shopping_lists")
         .insert({ family_id: me.family_id, name: "Nossa lista", created_by: me.id })
         .select()
         .single();
+      if (createListError) showToast("Erro ao criar a lista inicial — toque em + pra tentar de novo");
       listRows = created ? [created] : [];
     }
 
@@ -478,31 +481,52 @@ export default function ComprasPage() {
         ))}
       </div>
 
-      {/* Botões adicionar */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.5rem" }}>
-        <button
-          onClick={() => { setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? "")); setAddModal(true); }}
-          style={{
-            width: "100%", padding: "1rem", borderRadius: "16px", background: "var(--brand)",
-            color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center",
-            justifyContent: "center", gap: "0.6rem", fontSize: "1.02rem", fontWeight: 800,
-            boxShadow: "0 4px 16px rgba(122,171,138,0.35)",
-          }}
-        >
-          <MdAdd size={22} /> Adicionar item
-        </button>
-        <button
-          onClick={openBulkModal}
-          style={{
-            width: "100%", padding: "0.8rem", borderRadius: "16px", background: "var(--bg-secondary)",
-            color: "var(--text-secondary)", border: "1.5px solid var(--border)", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
-            fontSize: "0.9rem", fontWeight: 700,
-          }}
-        >
-          <MdContentPaste size={18} /> Colar lista (vários itens de uma vez)
-        </button>
-      </div>
+      {/* Botões adicionar (ou aviso pra criar a primeira lista) */}
+      {lists.length === 0 ? (
+        <div style={{
+          textAlign: "center", padding: "1.5rem 1.25rem", borderRadius: "16px",
+          border: "2px dashed var(--border)", marginBottom: "1.5rem",
+        }}>
+          <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.3rem" }}>
+            Você ainda não tem uma lista
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+            Crie uma lista (ex: &quot;Nossa lista&quot;) pra começar a adicionar itens
+          </div>
+          <button
+            onClick={() => setNewListModal(true)}
+            className="btn-primary"
+            style={{ justifyContent: "center", margin: "0 auto" }}
+          >
+            <MdAdd size={18} /> Criar minha primeira lista
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.5rem" }}>
+          <button
+            onClick={() => { setNewListId(listFilter !== "all" ? listFilter : (lists[0]?.id ?? "")); setAddModal(true); }}
+            style={{
+              width: "100%", padding: "1rem", borderRadius: "16px", background: "var(--brand)",
+              color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center",
+              justifyContent: "center", gap: "0.6rem", fontSize: "1.02rem", fontWeight: 800,
+              boxShadow: "0 4px 16px rgba(122,171,138,0.35)",
+            }}
+          >
+            <MdAdd size={22} /> Adicionar item
+          </button>
+          <button
+            onClick={openBulkModal}
+            style={{
+              width: "100%", padding: "0.8rem", borderRadius: "16px", background: "var(--bg-secondary)",
+              color: "var(--text-secondary)", border: "1.5px solid var(--border)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+              fontSize: "0.9rem", fontWeight: 700,
+            }}
+          >
+            <MdContentPaste size={18} /> Colar lista (vários itens de uma vez)
+          </button>
+        </div>
+      )}
 
       {/* Itens por categoria */}
       {categories.map((cat) => {
@@ -596,7 +620,7 @@ export default function ComprasPage() {
         </div>
       )}
 
-      {totalItems === 0 && (
+      {totalItems === 0 && lists.length > 0 && (
         <div style={{ textAlign: "center", padding: "3rem 1rem" }}>
           <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🛒</div>
           <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.4rem" }}>
