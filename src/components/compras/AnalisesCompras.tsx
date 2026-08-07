@@ -110,6 +110,29 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
 
   const listColors = ["#7aab8a", "#a07acc", "#5aabb0", "#c99a40", "#d06a6a", "#88aa40"];
 
+  // Tendência de preço por item (mesmo item, ao longo do tempo)
+  const priceHistory = new Map<string, { name: string; emoji: string; points: { date: string; price: number }[] }>();
+  bought.forEach((i) => {
+    if (i.actual_price == null) return;
+    const key = i.name.trim().toLowerCase();
+    const entry = priceHistory.get(key) ?? { name: i.name, emoji: i.emoji ?? "📦", points: [] };
+    entry.points.push({ date: i.checked_at!, price: i.actual_price });
+    priceHistory.set(key, entry);
+  });
+
+  const priceTrends = Array.from(priceHistory.values())
+    .map((entry) => {
+      const points = [...entry.points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const first = points[0].price;
+      const last = points[points.length - 1].price;
+      const change = first > 0 ? ((last - first) / first) * 100 : 0;
+      return { ...entry, points, first, last, change };
+    })
+    .filter((e) => e.points.length >= 2 && Math.abs(e.change) >= 1);
+
+  const gettingPricier = priceTrends.filter((e) => e.change > 0).sort((a, b) => b.change - a.change).slice(0, 5);
+  const gettingCheaper = priceTrends.filter((e) => e.change < 0).sort((a, b) => a.change - b.change).slice(0, 3);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
       {/* Cards de resumo */}
@@ -241,6 +264,76 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
           ))}
         </div>
       </div>
+
+      {/* Tendência de preço por item */}
+      {gettingPricier.length > 0 && (
+        <div className="card" style={{ padding: "1.25rem" }}>
+          <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+            De olho no preço
+          </h3>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+            Esses itens estão vindo cada vez mais caros — pode valer a pena comparar com outro mercado.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {gettingPricier.map((e) => (
+              <div
+                key={e.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                  padding: "0.6rem 0",
+                  borderBottom: "1px solid var(--border-light)",
+                }}
+              >
+                <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>{e.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {e.name}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {fmt(e.first)} → {fmt(e.last)} · {e.points.length}x
+                  </div>
+                </div>
+                <div style={{ width: 70, height: 32, flexShrink: 0 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={e.points} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                      <Line type="monotone" dataKey="price" stroke="#d06a6a" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.15rem", color: "#d06a6a", fontSize: "0.8rem", fontWeight: 700, flexShrink: 0, minWidth: 56, justifyContent: "flex-end" }}>
+                  <MdTrendingUp size={14} />
+                  {e.change.toFixed(0)}%
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {gettingCheaper.length > 0 && (
+            <>
+              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "1rem 0 0.5rem" }}>
+                Esses ficaram mais baratos:
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                {gettingCheaper.map((e) => (
+                  <div key={e.name} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                    <span style={{ fontSize: "0.95rem", flexShrink: 0 }}>{e.emoji}</span>
+                    <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {e.name}
+                    </span>
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{fmt(e.first)} → {fmt(e.last)}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.15rem", color: "#7aab8a", fontSize: "0.78rem", fontWeight: 700, flexShrink: 0 }}>
+                      <MdTrendingDown size={13} />
+                      {Math.abs(e.change).toFixed(0)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
