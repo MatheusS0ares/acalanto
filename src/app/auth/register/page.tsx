@@ -17,6 +17,7 @@ export default function RegisterPage() {
   const [familyName, setFamilyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -27,43 +28,27 @@ export default function RegisterPage() {
 
     setLoading(true);
     setError("");
+
+    const res = await fetch("/api/family/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, familyName, email, password, inviteCode }),
+    });
+    const result = await res.json();
+
+    if (!res.ok) {
+      setError(result.error || "Erro ao criar conta.");
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name, family_name: familyName } },
-    });
-
-    if (signUpError || !data.user) {
-      setError(signUpError?.message || "Erro ao criar conta.");
+    if (signInError) {
+      setError("Conta criada! Faça login para continuar.");
       setLoading(false);
-      return;
-    }
-
-    // Criar família no banco
-    const slug = familyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    const familyId = crypto.randomUUID();
-    const { error: familyError } = await supabase
-      .from("acalanto_families")
-      .insert({ id: familyId, name: familyName, slug: `${slug}-${Date.now()}` });
-
-    if (familyError) {
-      setError("Conta criada, mas houve um erro ao criar a família. Faça login para tentar de novo.");
-      setLoading(false);
-      return;
-    }
-
-    const { error: memberError } = await supabase.from("acalanto_family_members").insert({
-      family_id: familyId,
-      user_id: data.user.id,
-      name,
-      role: "owner",
-    });
-
-    if (memberError) {
-      setError("Conta criada, mas houve um erro ao vincular sua família. Faça login para tentar de novo.");
-      setLoading(false);
+      router.push("/auth/login");
       return;
     }
 
@@ -143,6 +128,23 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {step === 1 && (
             <>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.4rem", fontWeight: 500 }}>
+                  Código de convite
+                </label>
+                <input
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="Código que você recebeu"
+                  required
+                  className="input-field"
+                />
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                  O cadastro é só pra quem recebeu um código — sua família fica 100% separada das demais
+                </p>
+              </div>
+
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.4rem", fontWeight: 500 }}>
                   Seu nome
