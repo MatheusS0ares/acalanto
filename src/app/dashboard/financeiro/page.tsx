@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   MdAdd, MdCheck, MdClose, MdEdit, MdPieChart, MdReceipt, MdSavings,
   MdCreditCard, MdChevronLeft, MdChevronRight, MdTrendingUp, MdTrendingDown,
-  MdSearch, MdContentCopy,
+  MdSearch, MdContentCopy, MdContentPaste, MdArrowBack,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type { Transaction, FinanceCategory, CreditCard as CreditCardT, FamilyMember } from "@/types";
@@ -72,6 +72,66 @@ const paymentLabels: Record<string, string> = {
   cash: "Dinheiro", debit: "Débito", credit_card: "Crédito", pix: "Pix", transfer: "Transferência",
 };
 
+function normalize(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+const categoryKeywords: Record<string, string[]> = {
+  "Carro": ["carro", "combustivel", "gasolina", "estacionamento"],
+  "Casa": ["agua", "luz", "energia", "internet", "aluguel", "condominio", "gas"],
+  "Atividades das crianças": ["bale", "futebol", "natacao", "reforco", "curso"],
+  "Prestadores & terceiros": ["fernanda", "diarista", "faxina", "babá", "baba"],
+  "Cuidados pessoais": ["unha", "depilacao", "cabelo", "manicure", "salao"],
+  "Assinaturas": ["recarga", "recargas", "spotify", "seguro", "academia", "sistema", "netflix", "streaming"],
+  "Celular": ["celular", "telefone"],
+  "Saúde": ["farmacia", "remedio", "medico", "consulta", "plano de saude"],
+};
+
+function guessFinanceCategory(description: string): string {
+  const n = normalize(description);
+  const words = n.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const [cat, keywords] of Object.entries(categoryKeywords)) {
+    for (const kw of keywords) {
+      if (kw.includes(" ")) { if (n.includes(kw)) return cat; continue; }
+      if (words.some((w) => w === kw)) return cat;
+    }
+  }
+  return "Outros";
+}
+
+interface BulkFinanceRow {
+  description: string;
+  amount: number;
+  category: string;
+  recurring: boolean;
+  viaCartao: boolean;
+}
+
+function parseBulkFinanceText(text: string): { rows: BulkFinanceRow[]; ignored: string[] } {
+  const rows: BulkFinanceRow[] = [];
+  const ignored: string[] = [];
+
+  text.split("\n").map((l) => l.trim()).filter(Boolean).forEach((line) => {
+    const match = line.match(/^(\d+(?:[.,]\d{1,2})?)\s+(.+)/);
+    if (!match) { ignored.push(line); return; }
+
+    const amount = parseFloat(match[1].replace(",", "."));
+    let description = match[2].trim();
+    const viaCartao = /na fatura|estara na fatura/i.test(description);
+    description = description.replace(/\s*\([^)]*\)\s*$/, "").trim();
+
+    rows.push({
+      description: description.charAt(0).toUpperCase() + description.slice(1),
+      amount,
+      category: guessFinanceCategory(description),
+      recurring: true,
+      viaCartao,
+    });
+  });
+
+  return { rows, ignored };
+}
+
 export default function FinanceiroPage() {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -115,6 +175,16 @@ export default function FinanceiroPage() {
   // Lançamentos: busca/filtro
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "income" | "expense">("all");
+
+  // Colar lançamentos em lote
+  const [bulkModal, setBulkModal] = useState(false);
+  const [bulkStep, setBulkStep] = useState<"paste" | "review">("paste");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkDate, setBulkDate] = useState(todayStr());
+  const [bulkCardId, setBulkCardId] = useState("");
+  const [bulkRows, setBulkRows] = useState<BulkFinanceRow[]>([]);
+  const [bulkIgnored, setBulkIgnored] = useState<string[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -338,6 +408,63 @@ export default function FinanceiroPage() {
     showToast(`✓ ${rows.length} contas copiadas pra ${monthLabel}`);
   }
 
+  function openBulkModal() {
+    setBulkText("");
+    setBulkRows([]);
+    setBulkIgnored([]);
+    setBulkStep("paste");
+    setBulkDate(todayStr());
+    setBulkCardId(creditCards[0]?.id ?? "");
+    setBulkModal(true);
+  }
+
+  function analyzeBulkText() {
+    const { rows, ignored } = parseBulkFinanceText(bulkText);
+    if (!rows.length) return;
+    setBulkRows(rows);
+    setBulkIgnored(ignored);
+    setBulkStep("review");
+  }
+
+  function updateBulkRow(index: number, patch: Partial<BulkFinanceRow>) {
+    setBulkRows((prev) => prev.map((r, i) => i === index ? { ...r, ...patch } : r));
+  }
+
+  function removeBulkRow(index: number) {
+    setBulkRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function confirmBulkAdd() {
+    if (!bulkRows.length || !familyId || !memberId) return;
+    setBulkSaving(true);
+    const supabase = createClient();
+
+    const rows = bulkRows.map((r) => {
+      const cat = expenseCategories.find((c) => c.name === r.category) ?? expenseCategories.find((c) => c.name === "Outros");
+      return {
+        id: crypto.randomUUID(),
+        family_id: familyId,
+        type: "expense" as const,
+        amount: r.amount,
+        description: r.description,
+        category_id: cat?.id ?? "",
+        member_id: memberId,
+        payment_method: r.viaCartao ? "credit_card" : "pix",
+        credit_card_id: r.viaCartao && bulkCardId ? bulkCardId : null,
+        date: bulkDate,
+        is_recurring: r.recurring,
+        recurrence: r.recurring ? "monthly" as const : null,
+      };
+    });
+
+    const { error } = await supabase.from("acalanto_transactions").insert(rows);
+    setBulkSaving(false);
+    if (error) { showToast("Erro ao salvar lançamentos"); return; }
+    setTransactions((prev) => [...rows.map((r) => ({ ...r, created_at: new Date().toISOString() } as Transaction)), ...prev]);
+    showToast(`✅ ${rows.length} lançamentos adicionados!`);
+    setBulkModal(false);
+  }
+
   // Lançamentos filtrados
   const filteredTx = inMonth.filter((t) => {
     const matchSearch = t.description.toLowerCase().includes(search.toLowerCase());
@@ -473,6 +600,9 @@ export default function FinanceiroPage() {
                 </button>
               ))}
             </div>
+            <button onClick={openBulkModal} className="btn-secondary" style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+              <MdContentPaste size={16} /> Colar lista
+            </button>
           </div>
 
           {Object.entries(groupedTx).sort(([a], [b]) => b.localeCompare(a)).map(([date, txs]) => (
@@ -803,6 +933,126 @@ export default function FinanceiroPage() {
                 {savingCard ? "Salvando..." : "Adicionar cartão"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal colar lançamentos */}
+      {bulkModal && (
+        <div onClick={(e) => e.target === e.currentTarget && setBulkModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: "var(--bg-secondary)", borderRadius: "1.25rem 1.25rem 0 0", width: "100%", maxWidth: 560, padding: "1.5rem", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: 40, height: 4, borderRadius: 2, background: "var(--border)", margin: "0 auto 1.25rem", flexShrink: 0 }} />
+
+            {bulkStep === "paste" ? (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <h2 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>📋 Colar lista de gastos</h2>
+                  <button onClick={() => setBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+                </div>
+                <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                  Cole o texto com um gasto por linha, valor primeiro. Tipo &quot;781 carro&quot; ou &quot;240 seguro (estará na fatura)&quot;. Linhas sem valor no começo (como totais) são ignoradas.
+                </p>
+                <textarea
+                  autoFocus
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={"781 carro\n100 agua\n150 balé\n240 seguro (estará na fatura)\n..."}
+                  style={{
+                    width: "100%", minHeight: 220, background: "var(--bg-secondary)", color: "var(--text-primary)",
+                    border: "1.5px solid var(--border)", borderRadius: 12, padding: "0.9rem", fontSize: "0.9rem",
+                    lineHeight: 1.6, resize: "vertical", outline: "none", marginBottom: "1rem", fontFamily: "inherit",
+                  }}
+                />
+                <button onClick={analyzeBulkText} disabled={!bulkText.trim()} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: bulkText.trim() ? 1 : 0.5 }}>
+                  Analisar lista
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                  <button onClick={() => setBulkStep("paste")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem", padding: 0 }}>
+                    <MdArrowBack size={16} /> Voltar
+                  </button>
+                  <button onClick={() => setBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+                </div>
+                <h2 style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+                  Confira antes de salvar
+                </h2>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                  {bulkRows.length} {bulkRows.length === 1 ? "gasto" : "gastos"} — ajuste categoria ou valor antes de confirmar.
+                  {bulkIgnored.length > 0 && ` ${bulkIgnored.length} linha(s) sem valor no início foram ignoradas.`}
+                </p>
+
+                <div style={{ display: "grid", gridTemplateColumns: creditCards.length > 0 ? "1fr 1fr" : "1fr", gap: "0.75rem", marginBottom: "0.9rem" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.35rem" }}>Data</label>
+                    <input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} className="input-field" />
+                  </div>
+                  {creditCards.length > 0 && (
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.35rem" }}>Cartão (p/ &quot;na fatura&quot;)</label>
+                      <select value={bulkCardId} onChange={(e) => setBulkCardId(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
+                        {creditCards.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                  {bulkRows.map((row, idx) => (
+                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.6rem", borderRadius: 10, background: "var(--bg-secondary)", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "1rem", flexShrink: 0 }}>{catEmoji(row.category)}</span>
+                      <input
+                        type="text" value={row.description} onChange={(e) => updateBulkRow(idx, { description: e.target.value })}
+                        style={{ flex: 1, minWidth: 90, background: "none", border: "none", outline: "none", color: "var(--text-primary)", fontSize: "0.86rem", fontWeight: 600 }}
+                      />
+                      <input
+                        type="text" inputMode="decimal" value={row.amount}
+                        onChange={(e) => updateBulkRow(idx, { amount: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+                        style={{ width: 64, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-primary)", fontSize: "0.8rem", textAlign: "center", padding: "0.2rem" }}
+                      />
+                      <select
+                        value={row.category} onChange={(e) => updateBulkRow(idx, { category: e.target.value })}
+                        style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-secondary)", fontSize: "0.7rem", fontWeight: 700, padding: "0.2rem", maxWidth: 120 }}
+                      >
+                        {expenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                      {creditCards.length > 0 && (
+                        <button
+                          type="button" onClick={() => updateBulkRow(idx, { viaCartao: !row.viaCartao })}
+                          title="Vai na fatura do cartão"
+                          style={{
+                            fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.5rem", borderRadius: 999, cursor: "pointer",
+                            border: `1px solid ${row.viaCartao ? "var(--brand)" : "var(--border)"}`,
+                            background: row.viaCartao ? "rgba(122,171,138,0.15)" : "transparent",
+                            color: row.viaCartao ? "var(--brand)" : "var(--text-muted)",
+                          }}
+                        >
+                          💳 fatura
+                        </button>
+                      )}
+                      <button onClick={() => removeBulkRow(idx)} aria-label="Remover" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem", flexShrink: 0 }}>
+                        <MdClose size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  {bulkRows.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                      Nenhum gasto sobrou. Volte e cole a lista de novo.
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={confirmBulkAdd}
+                  disabled={!bulkRows.length || bulkSaving}
+                  className="btn-primary"
+                  style={{ width: "100%", justifyContent: "center", opacity: bulkRows.length ? 1 : 0.5, flexShrink: 0 }}
+                >
+                  <MdCheck size={18} /> {bulkSaving ? "Salvando..." : `Adicionar ${bulkRows.length} ${bulkRows.length === 1 ? "gasto" : "gastos"}`}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
