@@ -31,6 +31,7 @@ export interface Transaction {
   date: string;
   is_recurring: boolean;
   recurrence?: "daily" | "weekly" | "monthly" | "yearly";
+  notes?: string;
   created_at: string;
 }
 
@@ -47,11 +48,12 @@ export interface CreditCard {
   id: string;
   family_id: string;
   name: string;
-  last_digits: string;
-  limit: number;
-  closing_day: number;
-  due_day: number;
+  last_digits?: string;
+  card_limit: number;
+  closing_day?: number;
+  due_day?: number;
   color: string;
+  created_at: string;
 }
 
 // Documentos
