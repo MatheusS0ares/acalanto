@@ -27,8 +27,34 @@ const defaultCategories: { name: string; color: string; type: "income" | "expens
   { name: "Assinaturas", color: "#a07acc", type: "expense" },
   { name: "Cuidados pessoais", color: "#c07898", type: "expense" },
   { name: "Saúde", color: "#d06a6a", type: "expense" },
+  { name: "Atividades das crianças", color: "#e0a640", type: "expense" },
+  { name: "Prestadores & terceiros", color: "#6a9fc0", type: "expense" },
   { name: "Outros", color: "#8a96a0", type: "expense" },
 ];
+
+// Emojis amigáveis por categoria — independentes do banco, pra funcionar
+// mesmo em categorias criadas antes desse mapa existir.
+const categoryEmoji: Record<string, string> = {
+  "Salário": "💰",
+  "Casa": "🏠",
+  "Carro": "🚗",
+  "Celular": "📱",
+  "Assinaturas": "📺",
+  "Cuidados pessoais": "💅",
+  "Saúde": "🏥",
+  "Atividades das crianças": "⚽",
+  "Prestadores & terceiros": "🧹",
+  "Outros": "📦",
+};
+function catEmoji(name?: string) {
+  return categoryEmoji[name ?? ""] ?? "📦";
+}
+
+const memberColors = ["#7aab8a", "#a07acc", "#5aabb0", "#c99a40", "#d06a6a", "#88aa40"];
+function memberColor(id: string, members: FamilyMember[]) {
+  const idx = members.findIndex((m) => m.id === id);
+  return memberColors[Math.max(idx, 0) % memberColors.length];
+}
 
 const cardColors = ["#8b5cf6", "#f97316", "#f59e0b", "#3b82f6", "#22c55e", "#ec4899"];
 
@@ -132,10 +158,14 @@ export default function FinanceiroPage() {
       .select("*")
       .eq("family_id", me.family_id);
 
-    if (!categoryRows || categoryRows.length === 0) {
-      const rows = defaultCategories.map((c) => ({ id: crypto.randomUUID(), family_id: me!.family_id, name: c.name, color: c.color, type: c.type }));
-      const { error } = await supabase.from("acalanto_finance_categories").insert(rows);
-      if (!error) categoryRows = rows as FinanceCategory[];
+    // Cria as categorias padrão que ainda faltarem (roda também pra famílias
+    // que já usaram a versão anterior, sem duplicar as que já existem).
+    const existingKeys = new Set((categoryRows ?? []).map((c) => `${c.type}:${c.name}`));
+    const missing = defaultCategories.filter((c) => !existingKeys.has(`${c.type}:${c.name}`));
+    if (missing.length > 0) {
+      const newRows = missing.map((c) => ({ id: crypto.randomUUID(), family_id: me!.family_id, name: c.name, color: c.color, type: c.type }));
+      const { error } = await supabase.from("acalanto_finance_categories").insert(newRows);
+      if (!error) categoryRows = [...(categoryRows ?? []), ...newRows as FinanceCategory[]];
     }
     setCategories(categoryRows ?? []);
 
@@ -221,7 +251,7 @@ export default function FinanceiroPage() {
       setSavingTx(false);
       if (error) { showToast("Erro ao salvar alterações"); return; }
       setTransactions((prev) => prev.map((t) => t.id === editingTxId ? { ...t, ...patch } as Transaction : t));
-      showToast("Lançamento atualizado");
+      showToast("✓ Atualizado!");
     } else {
       const id = crypto.randomUUID();
       const { error } = await supabase.from("acalanto_transactions").insert({ id, family_id: familyId, ...patch });
@@ -229,7 +259,7 @@ export default function FinanceiroPage() {
       if (error) { showToast("Erro ao salvar lançamento"); return; }
       const newTx: Transaction = { id, family_id: familyId, created_at: new Date().toISOString(), ...patch } as Transaction;
       setTransactions((prev) => [newTx, ...prev]);
-      showToast(txModal === "income" ? "✓ Receita registrada!" : "✓ Gasto registrado!");
+      showToast(txModal === "income" ? "🎉 Receita registrada!" : "✅ Gasto registrado!");
     }
     closeTxModal();
   }
@@ -264,7 +294,7 @@ export default function FinanceiroPage() {
     if (error) { showToast("Erro ao adicionar cartão"); return; }
     setCreditCards((prev) => [...prev, { id, family_id: familyId, created_at: new Date().toISOString(), ...patch } as CreditCardT]);
     setCardModal(false);
-    showToast("Cartão adicionado!");
+    showToast("💳 Cartão adicionado!");
   }
 
   // Contas fixas: gastos recorrentes mensais do mês selecionado
@@ -363,6 +393,9 @@ export default function FinanceiroPage() {
         <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.35rem" }}>
           💰 Financeiro
         </h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>
+          Tudo o que entra e sai da família, registrado juntinho
+        </p>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button onClick={() => setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))} aria-label="Mês anterior" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem" }}>
             <MdChevronLeft size={22} />
@@ -461,7 +494,7 @@ export default function FinanceiroPage() {
                           {t.description}
                         </div>
                         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                          {cat?.name ?? "Outros"} · {member?.name ?? ""}{t.payment_method ? ` · ${paymentLabels[t.payment_method] ?? t.payment_method}` : ""}
+                          {catEmoji(cat?.name)} {cat?.name ?? "Outros"} · {member?.name ?? ""}{t.payment_method ? ` · ${paymentLabels[t.payment_method] ?? t.payment_method}` : ""}
                         </div>
                       </div>
                       <div style={{ fontWeight: 700, fontSize: "0.9rem", color: t.type === "income" ? "#4ade80" : "#f87171", whiteSpace: "nowrap" }}>
@@ -481,8 +514,11 @@ export default function FinanceiroPage() {
           ))}
 
           {filteredTx.length === 0 && (
-            <div style={{ textAlign: "center", padding: "2rem 1rem", color: "var(--text-muted)", fontSize: "0.9rem" }}>
-              Nenhum lançamento em {monthLabel}.
+            <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+              <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>🧾</div>
+              <div style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                Nada por aqui em {monthLabel} ainda. Toque em &quot;Registrar entrada&quot; ou &quot;Registrar gasto&quot; pra começar.
+              </div>
             </div>
           )}
         </div>
@@ -499,11 +535,12 @@ export default function FinanceiroPage() {
 
           {contasFixas.length === 0 ? (
             <div style={{ textAlign: "center", padding: "2.5rem 1rem", borderRadius: "16px", border: "2px dashed var(--border)" }}>
+              <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>📋</div>
               <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.3rem" }}>
-                Nenhuma conta fixa cadastrada em {monthLabel}
+                Nenhuma conta fixa em {monthLabel} ainda
               </div>
               <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                Registre um gasto e marque &quot;Lançamento recorrente&quot;, ou copie as contas do mês anterior.
+                Registre um gasto e marque &quot;Conta fixa&quot;, ou toque em &quot;Copiar do mês anterior&quot; ali em cima.
               </div>
             </div>
           ) : (
@@ -512,11 +549,11 @@ export default function FinanceiroPage() {
                 const cat = categoryMap.get(t.category_id);
                 return (
                   <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "0.875rem 1rem", borderBottom: i < contasFixas.length - 1 ? "1px solid var(--border-light)" : "none", gap: "0.75rem" }}>
-                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: cat?.color ?? "#8a96a0", flexShrink: 0 }} />
+                    <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>{catEmoji(cat?.name)}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-primary)" }}>{t.description}</div>
                       <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                        {cat?.name ?? "Outros"}{t.credit_card_id ? " · vai na fatura" : ""}
+                        {cat?.name ?? "Outros"}{t.credit_card_id ? " · 💳 vai na fatura" : ""}
                       </div>
                     </div>
                     <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--text-primary)" }}>{fmt(t.amount)}</div>
@@ -567,8 +604,11 @@ export default function FinanceiroPage() {
           </div>
 
           {creditCards.length === 0 && (
-            <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-muted)", fontSize: "0.9rem" }}>
-              Nenhum cartão cadastrado ainda.
+            <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
+              <div style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>💳</div>
+              <div style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                Nenhum cartão ainda — toque em &quot;Adicionar&quot; pra começar a acompanhar a fatura.
+              </div>
             </div>
           )}
 
@@ -652,7 +692,7 @@ export default function FinanceiroPage() {
                         fontSize: "0.8rem", cursor: "pointer", fontWeight: txCategoryId === cat.id ? 600 : 400,
                       }}
                     >
-                      {cat.name}
+                      {catEmoji(cat.name)} {cat.name}
                     </button>
                   ))}
                 </div>
@@ -660,9 +700,35 @@ export default function FinanceiroPage() {
 
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.4rem", fontWeight: 500 }}>Quem</label>
-                <select value={txMemberId} onChange={(e) => setTxMemberId(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
-                  {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  {members.map((m) => {
+                    const color = memberColor(m.id, members);
+                    const selected = txMemberId === m.id;
+                    return (
+                      <button
+                        key={m.id} type="button" onClick={() => setTxMemberId(m.id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: "0.5rem",
+                          padding: "0.35rem 0.8rem 0.35rem 0.35rem", borderRadius: "9999px",
+                          border: `1.5px solid ${selected ? color : "var(--border)"}`,
+                          background: selected ? `${color}18` : "transparent",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span style={{
+                          width: 26, height: 26, borderRadius: "50%", background: color, color: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: "0.72rem", fontWeight: 800, flexShrink: 0,
+                        }}>
+                          {m.name.charAt(0).toUpperCase()}
+                        </span>
+                        <span style={{ fontSize: "0.85rem", fontWeight: selected ? 700 : 500, color: selected ? color : "var(--text-secondary)" }}>
+                          {m.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>

@@ -23,6 +23,24 @@ function monthKey(d: Date) {
 
 const monthLabels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
+const categoryEmoji: Record<string, string> = {
+  "Salário": "💰",
+  "Casa": "🏠",
+  "Carro": "🚗",
+  "Celular": "📱",
+  "Assinaturas": "📺",
+  "Cuidados pessoais": "💅",
+  "Saúde": "🏥",
+  "Atividades das crianças": "⚽",
+  "Prestadores & terceiros": "🧹",
+  "Outros": "📦",
+};
+function catEmoji(name: string) {
+  return categoryEmoji[name] ?? "📦";
+}
+
+const memberColors = ["#7aab8a", "#a07acc", "#5aabb0", "#c99a40", "#d06a6a", "#88aa40"];
+
 export function VisaoGeralFinanceiro({ transactions, categories, members, monthDate }: Props) {
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
   const memberMap = new Map(members.map((m) => [m.id, m]));
@@ -39,10 +57,10 @@ export function VisaoGeralFinanceiro({ transactions, categories, members, monthD
       <div style={{ textAlign: "center", padding: "3rem 1rem" }}>
         <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>💰</div>
         <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.4rem" }}>
-          Nenhum lançamento ainda
+          Ainda tá tudo zerado por aqui
         </div>
         <div style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
-          Registre receitas e gastos pra ver o resumo do mês aqui
+          Assim que você registrar a primeira receita ou gasto, o resumo do mês aparece aqui — bonitinho e sempre certo
         </div>
       </div>
     );
@@ -76,7 +94,12 @@ export function VisaoGeralFinanceiro({ transactions, categories, members, monthD
     const name = memberMap.get(t.member_id)?.name ?? "Outro";
     memberTotals.set(name, (memberTotals.get(name) ?? 0) + t.amount);
   });
-  const memberChart = Array.from(memberTotals.entries()).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+  const memberChart = Array.from(memberTotals.entries())
+    .map(([name, total]) => ({
+      name, total,
+      color: memberColors[Math.max(members.findIndex((m) => m.name === name), 0) % memberColors.length],
+    }))
+    .sort((a, b) => b.total - a.total);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
@@ -157,7 +180,7 @@ export function VisaoGeralFinanceiro({ transactions, categories, members, monthD
             <div style={{ flex: 1, minWidth: 180, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               {categoryChart.map((c) => (
                 <div key={c.name} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: "0.95rem", flexShrink: 0 }}>{catEmoji(c.name)}</span>
                   <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)" }}>{c.name}</span>
                   <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)" }}>{fmt(c.total)}</span>
                   <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: 34, textAlign: "right" }}>
@@ -179,6 +202,13 @@ export function VisaoGeralFinanceiro({ transactions, categories, members, monthD
           <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
             {memberChart.map((m) => (
               <div key={m.name} style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
+                <span style={{
+                  width: 26, height: 26, borderRadius: "50%", background: m.color, color: "#fff",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: "0.72rem", fontWeight: 800, flexShrink: 0,
+                }}>
+                  {m.name.charAt(0).toUpperCase()}
+                </span>
                 <span style={{ flex: 1, fontSize: "0.85rem", color: "var(--text-secondary)" }}>{m.name}</span>
                 <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#4ade80" }}>{fmt(m.total)}</span>
               </div>
