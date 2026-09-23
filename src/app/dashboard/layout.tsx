@@ -5,7 +5,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
-import { MdHome, MdCheck } from "react-icons/md";
+import { MdHome, MdCheck, MdArrowBack } from "react-icons/md";
 
 function FamilySetupForm({ user, onDone }: { user: User; onDone: () => void }) {
   const [name, setName] = useState((user.user_metadata?.name as string) ?? "");
@@ -117,6 +117,30 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [impersonatingFamily, setImpersonatingFamily] = useState<string | null>(null);
+  const [restoringAdmin, setRestoringAdmin] = useState(false);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem("acalanto_impersonation_return");
+    if (raw) {
+      try {
+        setImpersonatingFamily(JSON.parse(raw).familyName ?? null);
+      } catch {
+        sessionStorage.removeItem("acalanto_impersonation_return");
+      }
+    }
+  }, []);
+
+  async function restoreAdminSession() {
+    const raw = sessionStorage.getItem("acalanto_impersonation_return");
+    if (!raw) return;
+    setRestoringAdmin(true);
+    const { access_token, refresh_token } = JSON.parse(raw);
+    const supabase = createClient();
+    await supabase.auth.setSession({ access_token, refresh_token });
+    sessionStorage.removeItem("acalanto_impersonation_return");
+    window.location.href = "/dashboard/admin";
+  }
 
   async function loadUser() {
     const supabase = createClient();
@@ -188,6 +212,25 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         isSuperAdmin={!!authUser?.email && authUser.email === process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL}
       />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", zIndex: 1 }}>
+        {impersonatingFamily && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem",
+            padding: "0.6rem 1rem", background: "#c99a40", color: "#1a1a1a", fontSize: "0.82rem", fontWeight: 600,
+          }}>
+            <span>👀 Vendo como &quot;{impersonatingFamily}&quot;</span>
+            <button
+              onClick={restoreAdminSession}
+              disabled={restoringAdmin}
+              style={{
+                display: "flex", alignItems: "center", gap: "0.3rem", background: "rgba(0,0,0,0.15)",
+                border: "none", borderRadius: 999, padding: "0.3rem 0.75rem", cursor: "pointer",
+                color: "#1a1a1a", fontSize: "0.78rem", fontWeight: 700,
+              }}
+            >
+              <MdArrowBack size={14} /> {restoringAdmin ? "Voltando..." : "Voltar pro admin"}
+            </button>
+          </div>
+        )}
         <TopBar onMenuClick={() => setSidebarOpen(true)} memberName={memberName} />
         <main
           style={{

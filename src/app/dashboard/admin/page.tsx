@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { MdCheck, MdLogin, MdPeople } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
 
 interface Member {
   family_id: string;
@@ -83,7 +84,7 @@ export default function AdminPage() {
 
   async function impersonate(family: FamilyRow) {
     const ok = window.confirm(
-      `Isso vai trocar sua sessão pela conta responsável por "${family.name}". Pra voltar a ser admin, você vai precisar sair e entrar de novo com sua conta. Continuar?`
+      `Isso vai trocar sua sessão pela conta responsável por "${family.name}". Você vai poder voltar a ser admin com um toque depois. Continuar?`
     );
     if (!ok) return;
 
@@ -97,6 +98,17 @@ export default function AdminPage() {
       showToast(data.error ?? "Erro ao entrar como essa família");
       return;
     }
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      sessionStorage.setItem("acalanto_impersonation_return", JSON.stringify({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        familyName: family.name,
+      }));
+    }
+
     window.location.href = data.actionLink;
   }
 
