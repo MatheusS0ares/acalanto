@@ -2,6 +2,8 @@ export interface Family {
   id: string;
   name: string;
   slug: string;
+  background_url?: string;
+  favicon_url?: string;
   created_at: string;
 }
 

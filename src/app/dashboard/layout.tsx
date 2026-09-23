@@ -112,6 +112,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [memberName, setMemberName] = useState("");
   const [familyName, setFamilyName] = useState("");
+  const [backgroundUrl, setBackgroundUrl] = useState("/family-bg.png");
   const [checking, setChecking] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -124,14 +125,21 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
     const { data: member } = await supabase
       .from("acalanto_family_members")
-      .select("name, acalanto_families(name)")
+      .select("name, acalanto_families(name, background_url, favicon_url)")
       .eq("user_id", user.id)
       .single();
 
     if (member) {
       setMemberName(member.name);
-      const fam = member.acalanto_families as unknown as { name: string } | null;
-      if (fam) setFamilyName(fam.name);
+      const fam = member.acalanto_families as unknown as { name: string; background_url?: string; favicon_url?: string } | null;
+      if (fam) {
+        setFamilyName(fam.name);
+        if (fam.background_url) setBackgroundUrl(fam.background_url);
+        if (fam.favicon_url) {
+          const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+          if (link) link.href = fam.favicon_url;
+        }
+      }
       setNeedsSetup(false);
     } else {
       setNeedsSetup(true);
@@ -156,7 +164,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg-primary)" }}>
       <img
-        src="/family-bg.png"
+        src={backgroundUrl}
         alt=""
         aria-hidden
         className="family-watermark"
