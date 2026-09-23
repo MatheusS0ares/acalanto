@@ -113,6 +113,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [memberName, setMemberName] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [backgroundUrl, setBackgroundUrl] = useState("/family-bg.png");
+  const [disabledTabs, setDisabledTabs] = useState<string[]>([]);
   const [checking, setChecking] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -125,16 +126,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
     const { data: member } = await supabase
       .from("acalanto_family_members")
-      .select("name, acalanto_families(name, background_url, favicon_url)")
+      .select("name, acalanto_families(name, background_url, favicon_url, disabled_tabs)")
       .eq("user_id", user.id)
       .single();
 
     if (member) {
       setMemberName(member.name);
-      const fam = member.acalanto_families as unknown as { name: string; background_url?: string; favicon_url?: string } | null;
+      const fam = member.acalanto_families as unknown as { name: string; background_url?: string; favicon_url?: string; disabled_tabs?: string[] } | null;
       if (fam) {
         setFamilyName(fam.name);
         if (fam.background_url) setBackgroundUrl(fam.background_url);
+        if (fam.disabled_tabs) setDisabledTabs(fam.disabled_tabs);
         if (fam.favicon_url) {
           const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
           if (link) link.href = fam.favicon_url;
@@ -178,7 +180,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           userSelect: "none",
         }}
       />
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} familyName={familyName} />
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        familyName={familyName}
+        disabledTabs={disabledTabs}
+        isSuperAdmin={!!authUser?.email && authUser.email === process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL}
+      />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", zIndex: 1 }}>
         <TopBar onMenuClick={() => setSidebarOpen(true)} memberName={memberName} />
         <main
