@@ -6,37 +6,41 @@ import {
   MdCheckBox, MdCalendarMonth, MdFavorite, MdDirectionsCar,
   MdContactPhone, MdKitchen, MdSettings, MdLogout, MdClose,
   MdPeople, MdRestaurant, MdBuild, MdLock, MdPhotoLibrary, MdPets,
+  MdAdminPanelSettings,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-  { href: "/dashboard", icon: MdHome, label: "Início", group: "" },
-  { href: "/dashboard/financeiro", icon: MdAttachMoney, label: "Financeiro", group: "Casa" },
-  { href: "/dashboard/documentos", icon: MdDescription, label: "Documentos", group: "Casa" },
-  { href: "/dashboard/mantimentos", icon: MdKitchen, label: "Mantimentos", group: "Casa" },
-  { href: "/dashboard/compras", icon: MdShoppingCart, label: "Compras", group: "Casa" },
-  { href: "/dashboard/cardapio", icon: MdRestaurant, label: "Cardápio", group: "Casa" },
-  { href: "/dashboard/reformas", icon: MdBuild, label: "Obras", group: "Casa" },
-  { href: "/dashboard/tarefas", icon: MdCheckBox, label: "Tarefas", group: "Família" },
-  { href: "/dashboard/calendario", icon: MdCalendarMonth, label: "Calendário", group: "Família" },
-  { href: "/dashboard/saude", icon: MdFavorite, label: "Saúde", group: "Família" },
-  { href: "/dashboard/pets", icon: MdPets, label: "Pets", group: "Família" },
-  { href: "/dashboard/memorias", icon: MdPhotoLibrary, label: "Memórias", group: "Família" },
-  { href: "/dashboard/veiculos", icon: MdDirectionsCar, label: "Veículos", group: "Outros" },
-  { href: "/dashboard/contatos", icon: MdContactPhone, label: "Emergência", group: "Outros" },
-  { href: "/dashboard/senhas", icon: MdLock, label: "Cofre", group: "Outros" },
+  { key: "inicio", href: "/dashboard", icon: MdHome, label: "Início", group: "" },
+  { key: "financeiro", href: "/dashboard/financeiro", icon: MdAttachMoney, label: "Financeiro", group: "Casa" },
+  { key: "documentos", href: "/dashboard/documentos", icon: MdDescription, label: "Documentos", group: "Casa" },
+  { key: "mantimentos", href: "/dashboard/mantimentos", icon: MdKitchen, label: "Mantimentos", group: "Casa" },
+  { key: "compras", href: "/dashboard/compras", icon: MdShoppingCart, label: "Compras", group: "Casa" },
+  { key: "cardapio", href: "/dashboard/cardapio", icon: MdRestaurant, label: "Cardápio", group: "Casa" },
+  { key: "reformas", href: "/dashboard/reformas", icon: MdBuild, label: "Obras", group: "Casa" },
+  { key: "tarefas", href: "/dashboard/tarefas", icon: MdCheckBox, label: "Tarefas", group: "Família" },
+  { key: "calendario", href: "/dashboard/calendario", icon: MdCalendarMonth, label: "Calendário", group: "Família" },
+  { key: "saude", href: "/dashboard/saude", icon: MdFavorite, label: "Saúde", group: "Família" },
+  { key: "pets", href: "/dashboard/pets", icon: MdPets, label: "Pets", group: "Família" },
+  { key: "memorias", href: "/dashboard/memorias", icon: MdPhotoLibrary, label: "Memórias", group: "Família" },
+  { key: "veiculos", href: "/dashboard/veiculos", icon: MdDirectionsCar, label: "Veículos", group: "Outros" },
+  { key: "contatos", href: "/dashboard/contatos", icon: MdContactPhone, label: "Emergência", group: "Outros" },
+  { key: "senhas", href: "/dashboard/senhas", icon: MdLock, label: "Cofre", group: "Outros" },
 ];
 
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
   familyName?: string;
+  disabledTabs?: string[];
+  isSuperAdmin?: boolean;
 }
 
-export function Sidebar({ open, onClose, familyName }: SidebarProps) {
+export function Sidebar({ open, onClose, familyName, disabledTabs = [], isSuperAdmin = false }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const visibleNavItems = navItems.filter((item) => item.key === "inicio" || !disabledTabs.includes(item.key));
 
   async function handleLogout() {
     const supabase = createClient();
@@ -136,7 +140,7 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
         <nav style={{ flex: 1, minHeight: 0, padding: "0.75rem 0.5rem", overflowY: "auto" }}>
           {(() => {
             let lastGroup = "";
-            return navItems.map(({ href, icon: Icon, label, group }) => {
+            return visibleNavItems.map(({ href, icon: Icon, label, group }) => {
               const showHeader = group && group !== lastGroup;
               if (group) lastGroup = group;
               return (
@@ -175,6 +179,28 @@ export function Sidebar({ open, onClose, familyName }: SidebarProps) {
 
         {/* Footer */}
         <div className="sidebar-footer" style={{ padding: "0.75rem 0.5rem", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+          {isSuperAdmin && (
+            <Link
+              href="/dashboard/admin"
+              onClick={onClose}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+                padding: "0.625rem 0.75rem",
+                borderRadius: "0.5rem",
+                textDecoration: "none",
+                color: isActive("/dashboard/admin") ? "var(--brand)" : "#c99a40",
+                background: isActive("/dashboard/admin") ? "var(--brand-bg)" : "transparent",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                marginBottom: "0.125rem",
+              }}
+            >
+              <MdAdminPanelSettings size={20} />
+              Admin
+            </Link>
+          )}
           <Link
             href="/dashboard/familia"
             onClick={onClose}

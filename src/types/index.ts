@@ -4,6 +4,7 @@ export interface Family {
   slug: string;
   background_url?: string;
   favicon_url?: string;
+  disabled_tabs?: string[];
   created_at: string;
 }
 
