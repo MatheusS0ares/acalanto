@@ -245,8 +245,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <style>{`
         .family-watermark {
           opacity: 0.5;
-          -webkit-mask-image: radial-gradient(circle at bottom right, black 25%, transparent 70%);
-          mask-image: radial-gradient(circle at bottom right, black 25%, transparent 70%);
+          -webkit-mask-image: radial-gradient(circle at bottom right, black 35%, transparent 85%);
+          mask-image: radial-gradient(circle at bottom right, black 35%, transparent 85%);
         }
         [data-theme="light"] .family-watermark {
           opacity: 0.85;
