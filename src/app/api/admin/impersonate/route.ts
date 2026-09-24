@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
     type: "magiclink",
     email: userData.user.email,
-    options: { redirectTo: `${req.nextUrl.origin}/dashboard` },
+    options: { redirectTo: `${req.nextUrl.origin}/auth/callback?next=/dashboard` },
   });
 
   if (linkError || !linkData) {
