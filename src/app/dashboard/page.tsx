@@ -5,10 +5,11 @@ import {
   MdAttachMoney, MdDescription, MdShoppingCart,
   MdCheckBox, MdCalendarMonth, MdFavorite, MdDirectionsCar,
   MdContactPhone, MdKitchen, MdTrendingUp, MdTrendingDown,
-  MdArrowForward, MdWarning, MdRestaurant, MdBuild,
+  MdRestaurant, MdBuild,
   MdLock, MdPhotoLibrary, MdPets,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
+import type { Transaction, ShoppingList, ShoppingItem } from "@/types";
 
 type Group = "casa" | "familia" | "seguranca";
 
@@ -25,12 +26,12 @@ interface Module {
 }
 
 const modules: Module[] = [
-  { href: "/dashboard/compras",     icon: MdShoppingCart,  label: "Lista de Compras", desc: "Adicione itens e marque o que já comprou",   color: "#a07acc", badge: "14 itens", badgeColor: "purple", group: "casa", quick: { label: "Comprar algo" } },
+  { href: "/dashboard/compras",     icon: MdShoppingCart,  label: "Lista de Compras", desc: "Adicione itens e marque o que já comprou",   color: "#a07acc", badgeColor: "purple", group: "casa", quick: { label: "Comprar algo" } },
   { href: "/dashboard/financeiro",  icon: MdAttachMoney,   label: "Financeiro",       desc: "Gastos, entradas e planejamento do mês",      color: "#7aab8a", group: "casa", quick: { label: "Registrar gasto" } },
-  { href: "/dashboard/mantimentos", icon: MdKitchen,       label: "Dispensa",         desc: "O que está em falta na despensa",              color: "#c99a40", badge: "3 em falta", badgeColor: "yellow", group: "casa" },
+  { href: "/dashboard/mantimentos", icon: MdKitchen,       label: "Dispensa",         desc: "O que está em falta na despensa",              color: "#c99a40", group: "casa" },
   { href: "/dashboard/cardapio",    icon: MdRestaurant,    label: "Cardápio",         desc: "O que vai ter de almoço e jantar",             color: "#d07a6a", group: "casa", quick: { label: "Ver cardápio" } },
   { href: "/dashboard/reformas",    icon: MdBuild,         label: "Obras",            desc: "Reformas e melhorias da casa",                 color: "#7888d0", group: "casa" },
-  { href: "/dashboard/tarefas",     icon: MdCheckBox,      label: "Tarefas",          desc: "Veja e conclua as tarefas da casa",            color: "#5aabb0", badge: "5 para fazer", badgeColor: "blue", group: "familia", quick: { label: "Nova tarefa" } },
+  { href: "/dashboard/tarefas",     icon: MdCheckBox,      label: "Tarefas",          desc: "Veja e conclua as tarefas da casa",            color: "#5aabb0", group: "familia", quick: { label: "Nova tarefa" } },
   { href: "/dashboard/calendario",  icon: MdCalendarMonth, label: "Calendário",       desc: "Compromissos e eventos da família",            color: "#c07898", group: "familia" },
   { href: "/dashboard/saude",       icon: MdFavorite,      label: "Saúde",            desc: "Consultas, medicamentos e histórico",          color: "#d06a6a", group: "familia" },
   { href: "/dashboard/pets",        icon: MdPets,          label: "Pets",             desc: "Vacinas, vet e cuidados dos animais",          color: "#88aa40", group: "familia" },
@@ -49,9 +50,29 @@ const groupInfo: Record<Group, { title: string; subtitle: string }> = {
   seguranca:  { title: "🔒 Documentos & Segurança",  subtitle: "Tudo guardado em um só lugar" },
 };
 
+interface DashStats {
+  saldoMes: number;
+  gastosHojeTotal: number;
+  gastosHojeCount: number;
+  listaAberta: number;
+}
+
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function monthPrefix(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function fmtCurrency(v: number) {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+}
+
 export default function DashboardPage() {
   const [memberName, setMemberName] = useState("Usuário");
   const [greeting, setGreeting] = useState("Bom dia");
+  const [stats, setStats] = useState<DashStats | null>(null);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -65,10 +86,47 @@ export default function DashboardPage() {
       if (!user) return;
       const { data: member } = await supabase
         .from("acalanto_family_members")
-        .select("name")
+        .select("name, family_id")
         .eq("user_id", user.id)
         .single();
-      if (member) setMemberName(member.name.split(" ")[0]);
+      if (!member) return;
+      setMemberName(member.name.split(" ")[0]);
+
+      const [{ data: txRows }, { data: listRows }] = await Promise.all([
+        supabase
+          .from("acalanto_transactions")
+          .select("type, amount, date")
+          .eq("family_id", member.family_id),
+        supabase
+          .from("acalanto_shopping_lists")
+          .select("id")
+          .eq("family_id", member.family_id)
+          .neq("status", "done"),
+      ]);
+
+      const transactions: Pick<Transaction, "type" | "amount" | "date">[] = txRows ?? [];
+      const currentMonth = monthPrefix(new Date());
+      const today = todayStr();
+
+      const saldoMes = transactions
+        .filter((t) => t.date.slice(0, 7) === currentMonth)
+        .reduce((sum, t) => sum + (t.type === "income" ? t.amount : -t.amount), 0);
+
+      const gastosHoje = transactions.filter((t) => t.type === "expense" && t.date === today);
+      const gastosHojeTotal = gastosHoje.reduce((sum, t) => sum + t.amount, 0);
+
+      const listIds: string[] = (listRows ?? []).map((l: Pick<ShoppingList, "id">) => l.id);
+      let listaAberta = 0;
+      if (listIds.length) {
+        const { data: itemRows } = await supabase
+          .from("acalanto_shopping_items")
+          .select("checked")
+          .in("list_id", listIds);
+        const items: Pick<ShoppingItem, "checked">[] = itemRows ?? [];
+        listaAberta = items.filter((i) => !i.checked).length;
+      }
+
+      setStats({ saldoMes, gastosHojeTotal, gastosHojeCount: gastosHoje.length, listaAberta });
     }
     load();
   }, []);
@@ -133,36 +191,34 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Alerta */}
-      <div
-        className="dash-fade"
-        style={{
-          animationDelay: `${nextDelay()}ms`,
-          background: "rgba(201,154,64,0.1)", border: "1.5px solid rgba(201,154,64,0.3)",
-          borderRadius: 14, padding: "1rem 1.125rem",
-          display: "flex", alignItems: "center", gap: "0.875rem", marginBottom: "2rem",
-        }}
-      >
-        <MdWarning size={24} color="#c99a40" style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "0.95rem", color: "#c99a40", fontWeight: 700 }}>⚠️ 3 itens em falta na dispensa</div>
-          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>IPVA do carro vence em 15 dias</div>
-        </div>
-        <Link href="/dashboard/mantimentos" style={{
-          fontSize: "0.85rem", color: "#c99a40", textDecoration: "none",
-          fontWeight: 700, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.25rem",
-        }}>
-          Ver tudo <MdArrowForward size={16} />
-        </Link>
-      </div>
-
       {/* Números rápidos */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.875rem", marginBottom: "2.25rem" }}>
         {[
-          { label: "Saldo do mês",  value: "R$ 3.450", sub: "+12% vs. mês passado", icon: MdAttachMoney,  color: "#7aab8a", trend: "up" as const },
-          { label: "Gastos hoje",   value: "R$ 127",   sub: "3 transações",          icon: MdTrendingDown, color: "#d06a6a", trend: "down" as const },
-          { label: "Tarefas feitas", value: "7 de 12",  sub: "Esta semana",           icon: MdCheckBox,    color: "#5aabb0" },
-          { label: "Lista de compras", value: "14 itens", sub: "Lista aberta",        icon: MdShoppingCart, color: "#a07acc" },
+          {
+            label: "Saldo do mês",
+            value: stats ? fmtCurrency(stats.saldoMes) : "—",
+            sub: stats ? "Neste mês" : "Carregando...",
+            icon: MdAttachMoney, color: "#7aab8a",
+            trend: stats ? (stats.saldoMes >= 0 ? "up" as const : "down" as const) : undefined,
+          },
+          {
+            label: "Gastos hoje",
+            value: stats ? fmtCurrency(stats.gastosHojeTotal) : "—",
+            sub: stats ? `${stats.gastosHojeCount} transaç${stats.gastosHojeCount === 1 ? "ão" : "ões"}` : "Carregando...",
+            icon: MdAttachMoney, color: "#d06a6a",
+          },
+          {
+            label: "Tarefas feitas",
+            value: "—",
+            sub: "Em breve",
+            icon: MdCheckBox, color: "#5aabb0",
+          },
+          {
+            label: "Lista de compras",
+            value: stats ? `${stats.listaAberta} ${stats.listaAberta === 1 ? "item" : "itens"}` : "—",
+            sub: "Lista aberta",
+            icon: MdShoppingCart, color: "#a07acc",
+          },
         ].map(({ label, value, sub, icon: Icon, color, trend }) => (
           <div key={label} className="card dash-fade" style={{ padding: "1.25rem", animationDelay: `${nextDelay()}ms` }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
@@ -195,7 +251,11 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "1rem" }}>
-            {modules.filter((m) => m.group === groupKey).map(({ href, icon: Icon, label, desc, badge, badgeColor, color }) => (
+            {modules.filter((m) => m.group === groupKey).map(({ href, icon: Icon, label, desc, badge: staticBadge, badgeColor, color }) => {
+              const badge = href === "/dashboard/compras" && stats
+                ? `${stats.listaAberta} ${stats.listaAberta === 1 ? "item" : "itens"}`
+                : staticBadge;
+              return (
               <Link key={href} href={href} style={{ textDecoration: "none" }}>
                 <div
                   className="card dash-fade dash-card"
@@ -230,7 +290,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         </section>
       ))}
