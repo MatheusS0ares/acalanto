@@ -109,7 +109,17 @@ export default function AdminPage() {
       }));
     }
 
-    window.location.href = data.actionLink;
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      token_hash: data.tokenHash,
+      type: "magiclink",
+    });
+    if (verifyError) {
+      sessionStorage.removeItem("acalanto_impersonation_return");
+      showToast("Erro ao entrar como essa família");
+      return;
+    }
+
+    window.location.href = "/dashboard";
   }
 
   if (loading) {
