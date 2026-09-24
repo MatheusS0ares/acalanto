@@ -35,12 +35,11 @@ export async function POST(req: NextRequest) {
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
     type: "magiclink",
     email: userData.user.email,
-    options: { redirectTo: `${req.nextUrl.origin}/auth/callback?next=/dashboard` },
   });
 
   if (linkError || !linkData) {
     return NextResponse.json({ error: "Erro ao gerar o link de acesso." }, { status: 500 });
   }
 
-  return NextResponse.json({ actionLink: linkData.properties.action_link });
+  return NextResponse.json({ tokenHash: linkData.properties.hashed_token });
 }
