@@ -1,32 +1,27 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MdAdd, MdCheck, MdStar, MdClose } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
+import type { FamilyMember } from "@/types";
 
 type Priority = "low" | "medium" | "high";
-type Status = "pending" | "done";
+type Status = "pending" | "in_progress" | "done";
+type Recurrence = "daily" | "weekly" | "monthly";
 
-interface Task {
+interface TaskRow {
   id: string;
+  family_id: string;
   title: string;
-  assignedTo: string;
+  assigned_to: string | null;
   priority: Priority;
   status: Status;
-  dueDate?: string;
-  recurring?: string;
+  due_date: string | null;
+  recurrence: Recurrence | null;
   points: number;
   emoji: string;
+  completed_by: string | null;
+  completed_at: string | null;
 }
-
-const mockTasks: Task[] = [
-  { id: "1", title: "Lavar louça", assignedTo: "Ana", priority: "medium", status: "pending", recurring: "daily", points: 5, emoji: "🍽️" },
-  { id: "2", title: "Aspirar sala", assignedTo: "Matheus", priority: "medium", status: "pending", dueDate: "2026-06-28", points: 10, emoji: "🏠" },
-  { id: "3", title: "Pagar contas", assignedTo: "Matheus", priority: "high", status: "pending", dueDate: "2026-06-30", points: 15, emoji: "💳" },
-  { id: "4", title: "Trocar filtro da água", assignedTo: "Ana", priority: "low", status: "done", points: 8, emoji: "💧" },
-  { id: "5", title: "Limpar banheiro", assignedTo: "Ana", priority: "medium", status: "done", recurring: "weekly", points: 12, emoji: "🚿" },
-  { id: "6", title: "Comprar remédio", assignedTo: "Matheus", priority: "high", status: "pending", dueDate: "2026-06-27", points: 10, emoji: "💊" },
-];
-
-const members = ["Todos", "Ana", "Matheus"];
 
 const priorityConfig: Record<Priority, { color: string; bg: string; label: string }> = {
   low:    { color: "var(--brand)", bg: "var(--brand-bg)", label: "Baixa prioridade" },
@@ -40,30 +35,117 @@ const recurringLabel: Record<string, string> = {
   monthly: "Tarefa mensal",
 };
 
+const emojis: Record<Priority, string> = { low: "📋", medium: "⚡", high: "🔴" };
+
 export default function TarefasPage() {
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [memberFilter, setMemberFilter] = useState("Todos");
   const [addModal, setAddModal] = useState(false);
   const [toast, setToast] = useState("");
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("id, family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+
+    setFamilyId(me.family_id);
+    setMemberId(me.id);
+
+    const { data: memberRows } = await supabase
+      .from("acalanto_family_members")
+      .select("*")
+      .eq("family_id", me.family_id);
+    setMembers(memberRows ?? []);
+
+    const { data: taskRows } = await supabase
+      .from("acalanto_tasks")
+      .select("id, family_id, title, assigned_to, priority, status, due_date, recurrence, points, emoji, completed_by, completed_at")
+      .eq("family_id", me.family_id)
+      .order("created_at", { ascending: false });
+    setTasks(taskRows ?? []);
+    setLoading(false);
+  }
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }
 
-  const filtered = tasks.filter((t) => memberFilter === "Todos" || t.assignedTo === memberFilter);
+  const memberMap = new Map(members.map((m) => [m.id, m]));
+  const memberName = (id: string | null) => (id && memberMap.get(id)?.name) || "Família";
+
+  const filtered = tasks.filter((t) => memberFilter === "Todos" || memberName(t.assigned_to) === memberFilter);
   const pending = filtered.filter((t) => t.status !== "done");
   const done = filtered.filter((t) => t.status === "done");
 
-  const scores = members.slice(1).map((name) => ({
-    name,
-    pts: tasks.filter((t) => t.status === "done" && t.assignedTo === name).reduce((s, t) => s + t.points, 0),
+  const scores = members.map((m) => ({
+    name: m.name,
+    pts: tasks.filter((t) => t.status === "done" && t.completed_by === m.id).reduce((s, t) => s + t.points, 0),
   }));
 
-  function completeTask(id: string) {
-    const task = tasks.find((t) => t.id === id);
-    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: "done" as Status } : t));
-    if (task) showToast(`✅ "${task.title}" concluída! +${task.points} pontos`);
+  async function completeTask(task: TaskRow) {
+    const supabase = createClient();
+    setTasks((prev) => prev.map((t) => t.id === task.id
+      ? { ...t, status: "done" as Status, completed_by: memberId, completed_at: new Date().toISOString() }
+      : t));
+    showToast(`✅ "${task.title}" concluída! +${task.points} pontos`);
+    await supabase
+      .from("acalanto_tasks")
+      .update({ status: "done", completed_by: memberId, completed_at: new Date().toISOString() })
+      .eq("id", task.id);
+  }
+
+  async function addTask(input: { title: string; assignedTo: string; priority: Priority; dueDate?: string; recurring?: Recurrence }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const points = input.priority === "high" ? 15 : input.priority === "medium" ? 10 : 5;
+    const row: TaskRow = {
+      id, family_id: familyId, title: input.title,
+      assigned_to: input.assignedTo || null,
+      priority: input.priority, status: "pending",
+      due_date: input.dueDate || null,
+      recurrence: input.recurring || null,
+      points, emoji: emojis[input.priority],
+      completed_by: null, completed_at: null,
+    };
+    setTasks((prev) => [row, ...prev]);
+    showToast(`✅ "${input.title}" adicionada!`);
+    setAddModal(false);
+    const { error } = await supabase.from("acalanto_tasks").insert({
+      id, family_id: familyId, title: input.title,
+      assigned_to: input.assignedTo || null,
+      priority: input.priority, status: "pending",
+      due_date: input.dueDate || null,
+      is_recurring: !!input.recurring,
+      recurrence: input.recurring || null,
+      points, emoji: emojis[input.priority],
+    });
+    if (error) {
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      showToast("Erro ao criar tarefa");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
   }
 
   return (
@@ -109,30 +191,32 @@ export default function TarefasPage() {
       </button>
 
       {/* Placar */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.75rem", marginBottom: "1.75rem" }}>
-        {scores.map(({ name, pts }) => (
-          <div key={name} className="card" style={{ padding: "1.125rem", display: "flex", alignItems: "center", gap: "0.875rem" }}>
-            <div style={{
-              width: 46, height: 46, borderRadius: "50%",
-              background: "linear-gradient(135deg, var(--brand), var(--brand-dark))",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontWeight: 800, color: "white", fontSize: "1rem", flexShrink: 0,
-            }}>
-              {name.charAt(0)}
-            </div>
-            <div>
-              <div style={{ fontSize: "0.875rem", color: "var(--text-secondary)", fontWeight: 600 }}>{name}</div>
-              <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                <MdStar size={18} color="#c99a40" /> {pts} pontos
+      {scores.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.75rem", marginBottom: "1.75rem" }}>
+          {scores.map(({ name, pts }) => (
+            <div key={name} className="card" style={{ padding: "1.125rem", display: "flex", alignItems: "center", gap: "0.875rem" }}>
+              <div style={{
+                width: 46, height: 46, borderRadius: "50%",
+                background: "linear-gradient(135deg, var(--brand), var(--brand-dark))",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontWeight: 800, color: "white", fontSize: "1rem", flexShrink: 0,
+              }}>
+                {name.charAt(0)}
+              </div>
+              <div>
+                <div style={{ fontSize: "0.875rem", color: "var(--text-secondary)", fontWeight: 600 }}>{name}</div>
+                <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                  <MdStar size={18} color="#c99a40" /> {pts} pontos
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Filtro por membro */}
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
-        {members.map((m) => (
+        {["Todos", ...members.map((m) => m.name)].map((m) => (
           <button
             key={m}
             onClick={() => setMemberFilter(m)}
@@ -159,7 +243,7 @@ export default function TarefasPage() {
           </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             {pending.map((task) => (
-              <TaskCard key={task.id} task={task} onComplete={() => completeTask(task.id)} />
+              <TaskCard key={task.id} task={task} assignedName={memberName(task.assigned_to)} onComplete={() => completeTask(task)} />
             ))}
           </div>
         </div>
@@ -172,29 +256,32 @@ export default function TarefasPage() {
             Concluídas — {done.length}
           </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", opacity: 0.65 }}>
-            {done.map((task) => <TaskCard key={task.id} task={task} />)}
+            {done.map((task) => <TaskCard key={task.id} task={task} assignedName={memberName(task.assigned_to)} />)}
           </div>
+        </div>
+      )}
+
+      {pending.length === 0 && done.length === 0 && (
+        <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)" }}>
+          Nenhuma tarefa ainda. Adicione a primeira acima 👆
         </div>
       )}
 
       {addModal && (
         <AddTaskModal
+          members={members}
           onClose={() => setAddModal(false)}
-          onAdd={(task) => {
-            setTasks((prev) => [task, ...prev]);
-            showToast(`✅ "${task.title}" adicionada!`);
-            setAddModal(false);
-          }}
+          onAdd={addTask}
         />
       )}
     </div>
   );
 }
 
-function TaskCard({ task, onComplete }: { task: Task; onComplete?: () => void }) {
+function TaskCard({ task, assignedName, onComplete }: { task: TaskRow; assignedName: string; onComplete?: () => void }) {
   const pc = priorityConfig[task.priority];
   const isDone = task.status === "done";
-  const isOverdue = !isDone && task.dueDate && new Date(task.dueDate) < new Date();
+  const isOverdue = !isDone && task.due_date && new Date(task.due_date) < new Date();
 
   return (
     <div
@@ -244,17 +331,17 @@ function TaskCard({ task, onComplete }: { task: Task; onComplete?: () => void })
         </div>
         <div style={{ display: "flex", gap: "0.625rem", alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontWeight: 500 }}>
-            👤 {task.assignedTo}
+            👤 {assignedName}
           </span>
-          {task.recurring && (
+          {task.recurrence && (
             <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-              🔁 {recurringLabel[task.recurring] ?? task.recurring}
+              🔁 {recurringLabel[task.recurrence] ?? task.recurrence}
             </span>
           )}
-          {task.dueDate && !isDone && (
+          {task.due_date && !isDone && (
             <span style={{ fontSize: "0.8rem", color: isOverdue ? "#e07878" : "var(--text-muted)", fontWeight: isOverdue ? 700 : 500 }}>
               {isOverdue ? "⚠️ Venceu " : "📅 Vence "}
-              {new Date(task.dueDate + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}
+              {new Date(task.due_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}
             </span>
           )}
         </div>
@@ -276,29 +363,26 @@ function TaskCard({ task, onComplete }: { task: Task; onComplete?: () => void })
   );
 }
 
-const emojis: Record<Priority, string> = { low: "📋", medium: "⚡", high: "🔴" };
-
-function AddTaskModal({ onClose, onAdd }: { onClose: () => void; onAdd: (t: Task) => void }) {
+function AddTaskModal({ members, onClose, onAdd }: {
+  members: FamilyMember[];
+  onClose: () => void;
+  onAdd: (t: { title: string; assignedTo: string; priority: Priority; dueDate?: string; recurring?: Recurrence }) => void;
+}) {
   const [title, setTitle] = useState("");
-  const [assignedTo, setAssignedTo] = useState("Ana");
+  const [assignedTo, setAssignedTo] = useState(members[0]?.id ?? "");
   const [priority, setPriority] = useState<Priority>("medium");
   const [dueDate, setDueDate] = useState("");
-  const [recurring, setRecurring] = useState("");
+  const [recurring, setRecurring] = useState<Recurrence | "">("");
 
   function save() {
     if (!title.trim()) return;
     onAdd({
-      id: Date.now().toString(),
       title: title.trim(),
       assignedTo,
       priority,
-      status: "pending",
       dueDate: dueDate || undefined,
       recurring: recurring || undefined,
-      points: priority === "high" ? 15 : priority === "medium" ? 10 : 5,
-      emoji: emojis[priority],
     });
-    onClose();
   }
 
   return (
@@ -330,9 +414,7 @@ function AddTaskModal({ onClose, onAdd }: { onClose: () => void; onAdd: (t: Task
             <div>
               <label style={{ display: "block", fontSize: "0.875rem", color: "var(--text-secondary)", marginBottom: "0.5rem", fontWeight: 600 }}>Quem vai fazer?</label>
               <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="input-field" style={{ cursor: "pointer", fontSize: "0.95rem" }}>
-                <option>Ana</option>
-                <option>Matheus</option>
-                <option>Família</option>
+                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </div>
             <div>
@@ -352,7 +434,7 @@ function AddTaskModal({ onClose, onAdd }: { onClose: () => void; onAdd: (t: Task
             </div>
             <div>
               <label style={{ display: "block", fontSize: "0.875rem", color: "var(--text-secondary)", marginBottom: "0.5rem", fontWeight: 600 }}>Repetir?</label>
-              <select value={recurring} onChange={(e) => setRecurring(e.target.value)} className="input-field" style={{ cursor: "pointer", fontSize: "0.95rem" }}>
+              <select value={recurring} onChange={(e) => setRecurring(e.target.value as Recurrence | "")} className="input-field" style={{ cursor: "pointer", fontSize: "0.95rem" }}>
                 <option value="">Não</option>
                 <option value="daily">Todo dia</option>
                 <option value="weekly">Toda semana</option>

@@ -55,6 +55,8 @@ interface DashStats {
   gastosHojeTotal: number;
   gastosHojeCount: number;
   listaAberta: number;
+  tarefasDone: number;
+  tarefasTotal: number;
 }
 
 function todayStr() {
@@ -92,7 +94,7 @@ export default function DashboardPage() {
       if (!member) return;
       setMemberName(member.name.split(" ")[0]);
 
-      const [{ data: txRows }, { data: listRows }] = await Promise.all([
+      const [{ data: txRows }, { data: listRows }, { data: taskRows }] = await Promise.all([
         supabase
           .from("acalanto_transactions")
           .select("type, amount, date")
@@ -102,6 +104,10 @@ export default function DashboardPage() {
           .select("id")
           .eq("family_id", member.family_id)
           .neq("status", "done"),
+        supabase
+          .from("acalanto_tasks")
+          .select("status")
+          .eq("family_id", member.family_id),
       ]);
 
       const transactions: Pick<Transaction, "type" | "amount" | "date">[] = txRows ?? [];
@@ -126,7 +132,10 @@ export default function DashboardPage() {
         listaAberta = items.filter((i) => !i.checked).length;
       }
 
-      setStats({ saldoMes, gastosHojeTotal, gastosHojeCount: gastosHoje.length, listaAberta });
+      const tasks: { status: string }[] = taskRows ?? [];
+      const tarefasDone = tasks.filter((t) => t.status === "done").length;
+
+      setStats({ saldoMes, gastosHojeTotal, gastosHojeCount: gastosHoje.length, listaAberta, tarefasDone, tarefasTotal: tasks.length });
     }
     load();
   }, []);
@@ -209,8 +218,8 @@ export default function DashboardPage() {
           },
           {
             label: "Tarefas feitas",
-            value: "—",
-            sub: "Em breve",
+            value: stats ? `${stats.tarefasDone} de ${stats.tarefasTotal}` : "—",
+            sub: stats ? "No total" : "Carregando...",
             icon: MdCheckBox, color: "#5aabb0",
           },
           {
