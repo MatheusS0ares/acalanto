@@ -1,115 +1,140 @@
 "use client";
-import { useState } from "react";
-import { MdAdd, MdBuild, MdClose, MdAttachMoney, MdCheck, MdPercent } from "react-icons/md";
+import { useEffect, useState } from "react";
+import { MdAdd, MdClose, MdCheck } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
 
-interface ReformItem {
-  id: string;
-  description: string;
-  category: string;
-  supplier?: string;
-  budgeted: number;
-  actual?: number;
-  status: "pending" | "approved" | "done";
-}
+type ItemStatus = "pending" | "approved" | "done";
+type ReformStatus = "planning" | "executing" | "done";
 
-interface Reform {
+interface ReformRow {
   id: string;
+  family_id: string;
   name: string;
-  room: string;
+  room: string | null;
   emoji: string;
   budget: number;
-  items: ReformItem[];
-  status: "planning" | "executing" | "done";
+  status: ReformStatus;
 }
 
-const mockReforms: Reform[] = [
-  {
-    id: "1",
-    name: "Reforma da Cozinha",
-    room: "Cozinha",
-    emoji: "🍳",
-    budget: 15000,
-    status: "executing",
-    items: [
-      { id: "1", description: "Armários planejados", category: "Marcenaria", supplier: "Marcenaria Silva", budgeted: 8000, actual: 7800, status: "done" },
-      { id: "2", description: "Revestimento cerâmico", category: "Piso/Revestimento", supplier: "Cerâmica Boa", budgeted: 2500, status: "approved" },
-      { id: "3", description: "Pia de granito", category: "Hidráulica", budgeted: 1800, status: "pending" },
-      { id: "4", description: "Instalação elétrica", category: "Elétrica", budgeted: 1200, actual: 1350, status: "done" },
-      { id: "5", description: "Pintura", category: "Pintura", budgeted: 600, status: "pending" },
-    ],
-  },
-  {
-    id: "2",
-    name: "Banheiro Suite",
-    room: "Banheiro",
-    emoji: "🚿",
-    budget: 6000,
-    status: "planning",
-    items: [
-      { id: "6", description: "Piso e revestimento", category: "Piso/Revestimento", budgeted: 2000, status: "pending" },
-      { id: "7", description: "Box de vidro", category: "Vidraçaria", budgeted: 1500, status: "pending" },
-      { id: "8", description: "Louças e metais", category: "Hidráulica", budgeted: 1800, status: "pending" },
-    ],
-  },
-];
+interface ReformItemRow {
+  id: string;
+  reform_id: string;
+  description: string;
+  category: string | null;
+  supplier: string | null;
+  budgeted: number;
+  actual: number | null;
+  status: ItemStatus;
+}
 
-const statusConfig = {
+const statusConfig: Record<ItemStatus, { label: string; color: string; bg: string }> = {
   pending: { label: "Pendente", color: "var(--text-muted)", bg: "var(--bg-secondary)" },
   approved: { label: "Aprovado", color: "#60a5fa", bg: "rgba(59,130,246,0.1)" },
   done: { label: "Concluído", color: "#22c55e", bg: "rgba(34,197,94,0.1)" },
 };
 
+const roomEmojis: Record<string, string> = { Sala: "🛋️", Cozinha: "🍳", Banheiro: "🚿", Quarto: "🛏️", Varanda: "🌿", Garagem: "🚗", Outros: "🔨" };
+
 export default function ReformasPage() {
-  const [reforms, setReforms] = useState<Reform[]>(mockReforms);
-  const [selected, setSelected] = useState<Reform>(mockReforms[0]);
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [reforms, setReforms] = useState<ReformRow[]>([]);
+  const [items, setItems] = useState<ReformItemRow[]>([]);
+  const [selectedId, setSelectedId] = useState("");
   const [addItemModal, setAddItemModal] = useState(false);
   const [addReformModal, setAddReformModal] = useState(false);
   const [newItemDesc, setNewItemDesc] = useState("");
   const [newItemBudget, setNewItemBudget] = useState("");
   const [newItemCategory, setNewItemCategory] = useState("Outros");
 
-  const current = reforms.find((r) => r.id === selected.id)!;
-  const totalBudgeted = current.items.reduce((s, i) => s + i.budgeted, 0);
-  const totalActual = current.items.reduce((s, i) => s + (i.actual ?? 0), 0);
-  const totalDonePct = current.items.length > 0
-    ? (current.items.filter((i) => i.status === "done").length / current.items.length) * 100
-    : 0;
-  const overBudget = totalActual > totalBudgeted;
+  useEffect(() => { load(); }, []);
 
-  function advanceStatus(reformId: string, itemId: string) {
-    setReforms((prev) =>
-      prev.map((r) =>
-        r.id === reformId
-          ? {
-              ...r,
-              items: r.items.map((i) => {
-                if (i.id !== itemId) return i;
-                const next = i.status === "pending" ? "approved" : i.status === "approved" ? "done" : "done";
-                return { ...i, status: next };
-              }),
-            }
-          : r
-      )
-    );
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+    setFamilyId(me.family_id);
+
+    const { data: reformRows } = await supabase
+      .from("acalanto_reforms")
+      .select("id, family_id, name, room, emoji, budget, status")
+      .eq("family_id", me.family_id)
+      .order("created_at");
+    const rs = reformRows ?? [];
+    setReforms(rs);
+    if (rs.length > 0) setSelectedId(rs[0].id);
+
+    if (rs.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("acalanto_reform_items")
+        .select("id, reform_id, description, category, supplier, budgeted, actual, status")
+        .in("reform_id", rs.map((r) => r.id));
+      setItems(itemRows ?? []);
+    }
+    setLoading(false);
   }
 
-  function addItem() {
-    if (!newItemDesc || !newItemBudget) return;
-    const newItem: ReformItem = {
-      id: Date.now().toString(),
-      description: newItemDesc,
-      category: newItemCategory,
-      budgeted: Number(newItemBudget),
-      status: "pending",
+  const current = reforms.find((r) => r.id === selectedId) ?? null;
+  const currentItems = items.filter((i) => i.reform_id === selectedId);
+  const totalBudgeted = currentItems.reduce((s, i) => s + i.budgeted, 0);
+  const totalActual = currentItems.reduce((s, i) => s + (i.actual ?? 0), 0);
+  const totalDonePct = currentItems.length > 0
+    ? (currentItems.filter((i) => i.status === "done").length / currentItems.length) * 100
+    : 0;
+  const overBudget = current ? totalActual > totalBudgeted : false;
+
+  async function advanceStatus(item: ReformItemRow) {
+    const supabase = createClient();
+    const next: ItemStatus = item.status === "pending" ? "approved" : "done";
+    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, status: next } : i));
+    await supabase.from("acalanto_reform_items").update({ status: next }).eq("id", item.id);
+  }
+
+  async function addItem() {
+    if (!newItemDesc || !newItemBudget || !current) return;
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: ReformItemRow = {
+      id, reform_id: current.id, description: newItemDesc, category: newItemCategory,
+      supplier: null, budgeted: Number(newItemBudget), actual: null, status: "pending",
     };
-    setReforms((prev) =>
-      prev.map((r) =>
-        r.id === current.id ? { ...r, items: [...r.items, newItem] } : r
-      )
-    );
-    setNewItemDesc("");
-    setNewItemBudget("");
+    setItems((prev) => [...prev, row]);
+    setNewItemDesc(""); setNewItemBudget("");
     setAddItemModal(false);
+    const { error } = await supabase.from("acalanto_reform_items").insert({
+      id, reform_id: current.id, description: newItemDesc, category: newItemCategory,
+      budgeted: Number(newItemBudget), status: "pending",
+    });
+    if (error) setItems((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  async function addReform(input: { name: string; room: string; budget: number }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: ReformRow = { id, family_id: familyId, name: input.name, room: input.room, emoji: roomEmojis[input.room] ?? "🔨", budget: input.budget, status: "planning" };
+    setReforms((prev) => [...prev, row]);
+    setSelectedId(id);
+    setAddReformModal(false);
+    const { error } = await supabase.from("acalanto_reforms").insert({
+      id, family_id: familyId, name: input.name, room: input.room, emoji: row.emoji, budget: input.budget, status: "planning",
+    });
+    if (error) setReforms((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
   }
 
   return (
@@ -124,22 +149,29 @@ export default function ReformasPage() {
         <MdAdd size={24} /> Adicionar nova obra
       </button>
 
+      {!current && (
+        <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)" }}>
+          Nenhuma obra cadastrada ainda. Adicione a primeira acima 👆
+        </div>
+      )}
+
+      {current && (
       <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: "1.5rem" }} className="reform-grid">
         {/* Lista de obras */}
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
             {reforms.map((r) => {
-              const spent = r.items.reduce((s, i) => s + (i.actual ?? 0), 0);
+              const spent = items.filter((i) => i.reform_id === r.id).reduce((s, i) => s + (i.actual ?? 0), 0);
               const pct = Math.min((spent / r.budget) * 100, 100);
               return (
                 <button
                   key={r.id}
-                  onClick={() => setSelected(r)}
+                  onClick={() => setSelectedId(r.id)}
                   style={{
                     display: "flex", alignItems: "center", gap: "0.75rem",
                     padding: "0.875rem 1rem",
-                    background: selected.id === r.id ? "rgba(34,197,94,0.1)" : "var(--bg-card)",
-                    border: `1px solid ${selected.id === r.id ? "rgba(34,197,94,0.3)" : "var(--border)"}`,
+                    background: selectedId === r.id ? "rgba(34,197,94,0.1)" : "var(--bg-card)",
+                    border: `1px solid ${selectedId === r.id ? "rgba(34,197,94,0.3)" : "var(--border)"}`,
                     borderRadius: "0.75rem",
                     cursor: "pointer",
                     textAlign: "left",
@@ -178,14 +210,19 @@ export default function ReformasPage() {
 
           {/* Itens */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-            <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)" }}>Itens ({current.items.length})</h3>
+            <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)" }}>Itens ({currentItems.length})</h3>
             <button onClick={() => setAddItemModal(true)} className="btn-secondary" style={{ fontSize: "0.8rem" }}>
               <MdAdd size={14} /> Adicionar item
             </button>
           </div>
 
           <div className="card" style={{ overflow: "hidden", padding: 0 }}>
-            {current.items.map((item, i) => {
+            {currentItems.length === 0 && (
+              <div style={{ padding: "1.5rem", textAlign: "center", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                Nenhum item cadastrado ainda.
+              </div>
+            )}
+            {currentItems.map((item, i) => {
               const cfg = statusConfig[item.status];
               return (
                 <div
@@ -193,11 +230,11 @@ export default function ReformasPage() {
                   style={{
                     display: "flex", alignItems: "center", gap: "0.875rem",
                     padding: "0.875rem 1rem",
-                    borderBottom: i < current.items.length - 1 ? "1px solid var(--border-light)" : "none",
+                    borderBottom: i < currentItems.length - 1 ? "1px solid var(--border-light)" : "none",
                   }}
                 >
                   <button
-                    onClick={() => advanceStatus(current.id, item.id)}
+                    onClick={() => advanceStatus(item)}
                     style={{
                       width: 28, height: 28, borderRadius: "50%",
                       border: item.status === "done" ? "none" : "2px solid var(--border)",
@@ -239,8 +276,9 @@ export default function ReformasPage() {
           </div>
         </div>
       </div>
+      )}
 
-      {addItemModal && (
+      {addItemModal && current && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}
           onClick={(e) => e.target === e.currentTarget && setAddItemModal(false)}>
           <div style={{ background: "var(--bg-secondary)", borderRadius: "1.25rem 1.25rem 0 0", width: "100%", maxWidth: 480, padding: "1.5rem" }}>
@@ -265,7 +303,6 @@ export default function ReformasPage() {
                   <input type="number" value={newItemBudget} onChange={(e) => setNewItemBudget(e.target.value)} placeholder="0,00" min="0" step="0.01" className="input-field" />
                 </div>
               </div>
-              <input type="text" placeholder="Fornecedor (opcional)" className="input-field" />
               <button onClick={addItem} disabled={!newItemDesc || !newItemBudget} className="btn-primary" style={{ width: "100%", justifyContent: "center" }}>
                 <MdAdd size={18} /> Adicionar
               </button>
@@ -274,7 +311,7 @@ export default function ReformasPage() {
         </div>
       )}
 
-      {addReformModal && <AddReformModal onClose={() => setAddReformModal(false)} onAdd={(r) => { setReforms((p) => [...p, r]); setSelected(r); setAddReformModal(false); }} />}
+      {addReformModal && <AddReformModal onClose={() => setAddReformModal(false)} onAdd={addReform} />}
 
       <style>{`
         @media (max-width: 700px) {
@@ -285,15 +322,14 @@ export default function ReformasPage() {
   );
 }
 
-function AddReformModal({ onClose, onAdd }: { onClose: () => void; onAdd: (r: Reform) => void }) {
+function AddReformModal({ onClose, onAdd }: { onClose: () => void; onAdd: (r: { name: string; room: string; budget: number }) => void }) {
   const [name, setName] = useState("");
   const [room, setRoom] = useState("Sala");
   const [budget, setBudget] = useState("");
-  const emojis: Record<string, string> = { Sala: "🛋️", Cozinha: "🍳", Banheiro: "🚿", Quarto: "🛏️", Varanda: "🌿", Garagem: "🚗", Outros: "🔨" };
 
   function save() {
     if (!name.trim() || !budget) return;
-    onAdd({ id: Date.now().toString(), name: name.trim(), room, emoji: emojis[room] ?? "🔨", budget: Number(budget), items: [], status: "planning" });
+    onAdd({ name: name.trim(), room, budget: Number(budget) });
   }
 
   return (
@@ -313,7 +349,7 @@ function AddReformModal({ onClose, onAdd }: { onClose: () => void; onAdd: (r: Re
             <div>
               <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Cômodo</label>
               <select value={room} onChange={(e) => setRoom(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
-                {Object.keys(emojis).map((r) => <option key={r}>{r}</option>)}
+                {Object.keys(roomEmojis).map((r) => <option key={r}>{r}</option>)}
               </select>
             </div>
             <div>
