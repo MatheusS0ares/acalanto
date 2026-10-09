@@ -54,11 +54,26 @@ interface ItemHistoryEntry {
   category: string;
   points: ItemPoint[];
 }
+interface PurchaseItem {
+  name: string;
+  emoji: string;
+  quantity: number;
+  unit: string;
+  price: number;
+}
+interface Purchase {
+  key: string;
+  date: string;
+  listName: string;
+  items: PurchaseItem[];
+  total: number;
+}
 
 export function AnalisesCompras({ items, lists, categories }: Props) {
   const [period, setPeriod] = useState<Period>("6m");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
+  const [selectedPurchaseKey, setSelectedPurchaseKey] = useState<string | null>(null);
 
   const categoryMap = new Map(categories.map((c) => [c.name, c]));
   const allBought = items.filter((i) => i.checked && i.actual_price != null && i.checked_at);
@@ -107,6 +122,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
   const listTotals = new Map<string, number>();
   const itemTotals = new Map<string, { name: string; emoji: string; category: string; spend: number; count: number }>();
   const itemHistory = new Map<string, ItemHistoryEntry>();
+  const purchaseMap = new Map<string, Purchase>();
   let totalPeriod = 0;
 
   bought.forEach((i) => {
@@ -132,7 +148,16 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
     const hist = itemHistory.get(key) ?? { name: i.name, emoji: i.emoji ?? "📦", category: cat, points: [] };
     hist.points.push({ date: i.checked_at!, price: i.actual_price ?? 0, quantity: i.quantity, listName });
     itemHistory.set(key, hist);
+
+    const purchaseKey = `${i.list_id}|${dayKey(checkedDate)}`;
+    const purchase = purchaseMap.get(purchaseKey) ?? { key: purchaseKey, date: i.checked_at!, listName, items: [], total: 0 };
+    purchase.items.push({ name: i.name, emoji: i.emoji ?? "📦", quantity: i.quantity, unit: i.unit, price: i.actual_price ?? 0 });
+    purchase.total += s;
+    purchaseMap.set(purchaseKey, purchase);
   });
+
+  const purchases = Array.from(purchaseMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const selectedPurchase = selectedPurchaseKey ? purchaseMap.get(selectedPurchaseKey) ?? null : null;
 
   const ticketMedio = dayTotals.size > 0 ? totalPeriod / dayTotals.size : 0;
 
@@ -353,6 +378,41 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
             </div>
           )}
 
+          {/* Por compra */}
+          <div className="card" style={{ padding: "1.25rem" }}>
+            <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+              Por compra
+            </h3>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+              Cada ida ao mercado, com o total e os itens dessa compra. Toque pra ver o detalhe.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
+              {purchases.map((p) => (
+                <div
+                  key={p.key}
+                  onClick={() => setSelectedPurchaseKey(p.key)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer",
+                    padding: "0.6rem 0", borderBottom: "1px solid var(--border-light)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)" }}>
+                      {new Date(p.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{p.listName} · {p.items.length} {p.items.length === 1 ? "item" : "itens"}</div>
+                  </div>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--brand)", flexShrink: 0 }}>{fmt(p.total)}</div>
+                </div>
+              ))}
+              {purchases.length === 0 && (
+                <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                  Nenhuma compra com valor registrado nesse período.
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Itens mais comprados */}
           <div className="card" style={{ padding: "1.25rem" }}>
             <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
@@ -510,6 +570,46 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--brand)" }}>{fmt(p.price)}{p.quantity > 1 ? "/un" : ""}</div>
                     {p.quantity > 1 && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{fmt(p.price * p.quantity)} total</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de detalhe da compra */}
+      {selectedPurchase && (
+        <div onClick={(e) => e.target === e.currentTarget && setSelectedPurchaseKey(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
+          <div style={{ background: "var(--bg-card)", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 560, padding: "1.5rem", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem", flexShrink: 0 }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexShrink: 0 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--text-primary)" }}>
+                  {new Date(selectedPurchase.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selectedPurchase.listName}</div>
+              </div>
+              <button onClick={() => setSelectedPurchaseKey(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.6rem 0.75rem", background: "var(--bg-secondary)", borderRadius: 10, marginBottom: "1.1rem", flexShrink: 0 }}>
+              <span style={{ fontSize: "0.82rem", color: "var(--text-muted)", fontWeight: 600 }}>{selectedPurchase.items.length} {selectedPurchase.items.length === 1 ? "item" : "itens"}</span>
+              <span style={{ fontSize: "1rem", fontWeight: 800, color: "var(--brand)" }}>{fmt(selectedPurchase.total)}</span>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {selectedPurchase.items.map((it, idx) => (
+                <div key={idx} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0", borderBottom: "1px solid var(--border-light)" }}>
+                  <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>{it.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {it.name}{it.quantity > 1 && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> ×{it.quantity}{it.unit !== "unid" ? ` ${it.unit}` : ""}</span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>{fmt(it.price * it.quantity)}</div>
+                    {it.quantity > 1 && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{fmt(it.price)}/un</div>}
                   </div>
                 </div>
               ))}
