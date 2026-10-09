@@ -18,6 +18,8 @@ interface Props {
   items: ShoppingItem[];
   lists: ShoppingList[];
   categories: Category[];
+  familyName: string;
+  familyBackgroundUrl: string;
 }
 
 function fmt(v: number) {
@@ -56,7 +58,7 @@ interface ItemHistoryEntry {
   points: ItemPoint[];
 }
 
-export function AnalisesCompras({ items, lists, categories }: Props) {
+export function AnalisesCompras({ items, lists, categories, familyName, familyBackgroundUrl }: Props) {
   const [period, setPeriod] = useState<Period>("6m");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -194,6 +196,8 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
           selection={selection}
           events={allEvents}
           categories={categories}
+          familyName={familyName}
+          familyBackgroundUrl={familyBackgroundUrl}
           onSelect={setSelection}
           onClose={() => setSelection(null)}
         />

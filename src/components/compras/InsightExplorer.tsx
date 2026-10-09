@@ -43,6 +43,10 @@ function normalize(s: string) {
   return s.trim().toLowerCase();
 }
 
+function fileSafe(s: string) {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+}
+
 const monthLabels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const NO_STORE = "__sem_mercado__";
 
@@ -221,15 +225,18 @@ export function ExplorerPicker({ events, categories, selection, onSelect }: {
   );
 }
 
-export function InsightPanel({ selection, events, categories, onSelect, onClose }: {
+export function InsightPanel({ selection, events, categories, familyName, familyBackgroundUrl, onSelect, onClose }: {
   selection: Selection;
   events: Event[];
   categories: Category[];
+  familyName: string;
+  familyBackgroundUrl: string;
   onSelect: (s: Selection) => void;
   onClose: () => void;
 }) {
   const { type, key } = selection;
   const categoryMap = new Map(categories.map((c) => [c.name, c]));
+  const [showReport, setShowReport] = useState(false);
 
   const allGroupsOfType = useMemo(() => buildGroups(events, type, categories), [events, type, categories]);
   const group = allGroupsOfType.get(key);
@@ -398,6 +405,32 @@ export function InsightPanel({ selection, events, categories, onSelect, onClose 
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={22} /></button>
         </div>
       </div>
+
+      {type === "list" && (
+        <button
+          onClick={() => setShowReport(true)}
+          style={{
+            width: "100%", padding: "0.9rem 1rem", borderRadius: 14, border: "none", cursor: "pointer",
+            background: "linear-gradient(135deg, var(--brand), var(--brand-dark, #5a8a6a))",
+            color: "#fff", fontSize: "0.92rem", fontWeight: 800,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+            marginBottom: "1.25rem", boxShadow: "0 4px 16px rgba(122,171,138,0.35)",
+          }}
+        >
+          <MdAnalytics size={18} /> Ver relatório analítico completo dessa lista
+        </button>
+      )}
+
+      {showReport && type === "list" && (
+        <ListAnalyticalReport
+          listId={key}
+          listLabel={group.label}
+          allEvents={events}
+          familyName={familyName}
+          familyBackgroundUrl={familyBackgroundUrl}
+          onClose={() => setShowReport(false)}
+        />
+      )}
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "0.6rem", marginBottom: "1.25rem" }}>
@@ -576,7 +609,7 @@ interface PdfExportData {
   lastDate: Date;
 }
 
-async function exportInsightPdf(d: PdfExportData) {
+async function createPdfWriter() {
   const { default: jsPDF } = await import("jspdf");
   const doc = new jsPDF();
   const marginX = 16;
@@ -612,6 +645,14 @@ async function exportInsightPdf(d: PdfExportData) {
     y += 4;
   }
 
+  function addGap(n = 4) { y += n; }
+
+  return { doc, text, section, addGap };
+}
+
+async function exportInsightPdf(d: PdfExportData) {
+  const { doc, text, section, addGap } = await createPdfWriter();
+
   text(`Análise completa — ${dimLabels[d.type].label}`, { size: 11, bold: true, color: [90, 140, 110] });
   text(d.group.label, { size: 16, bold: true, gap: 1 });
   text(`Primeira compra em ${d.firstDate.toLocaleDateString("pt-BR")} · última em ${d.lastDate.toLocaleDateString("pt-BR")}`, { size: 9, color: [120, 120, 120], gap: 6 });
@@ -631,7 +672,7 @@ async function exportInsightPdf(d: PdfExportData) {
   d.ranked.slice(0, 10).forEach((g, idx) => {
     text(`${idx + 1}. ${g.label} — ${fmt(g.total)}`);
   });
-  y += 4;
+  addGap();
 
   if (d.pricierNow.length || d.cheaperNow.length) {
     text("Comprou mais barato ou mais caro que antes?", { size: 12, bold: true, gap: 3 });
@@ -640,7 +681,7 @@ async function exportInsightPdf(d: PdfExportData) {
     [...d.pricierNow, ...d.cheaperNow].forEach((p) => {
       text(`${p.label}: ${fmt(p.priorAvg)} → ${fmt(p.last)} (${p.change > 0 ? "+" : ""}${p.change.toFixed(0)}%)`);
     });
-    y += 4;
+    addGap();
   }
 
   section("Produtos", d.topProducts);
@@ -648,6 +689,212 @@ async function exportInsightPdf(d: PdfExportData) {
   section("Listas", d.topLists);
   section("Mercados", d.topStores);
 
-  const fileSafeLabel = d.group.label.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-  doc.save(`analise-${fileSafeLabel || d.type}.pdf`);
+  doc.save(`analise-${fileSafe(d.group.label) || d.type}.pdf`);
+}
+
+interface ItemInsight {
+  key: string;
+  name: string;
+  emoji: string;
+  quantity: number;
+  price: number;
+  boughtBeforeCount: number;
+  priceChange: number | null;
+  priorAvg: number | null;
+  storeInsight: { diff: number; avgHere: number; avgOther: number } | null;
+}
+
+async function exportListReportPdf(d: {
+  listLabel: string;
+  familyName: string;
+  latestDay: string;
+  latestTotal: number;
+  itemInsights: ItemInsight[];
+  totalChangeImpact: number;
+  listStore: string | null;
+}) {
+  const { text, doc } = await createPdfWriter();
+
+  text(d.familyName ? `Família ${d.familyName}` : "Relatório Analítico", { size: 11, bold: true, color: [90, 140, 110] });
+  text(d.listLabel, { size: 16, bold: true, gap: 1 });
+  text(
+    `Compra de ${new Date(d.latestDay + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}${d.listStore ? ` · ${d.listStore}` : ""}`,
+    { size: 9, color: [120, 120, 120], gap: 6 }
+  );
+
+  text("Resumo", { size: 12, bold: true, gap: 3 });
+  text(`Total dessa compra: ${fmt(d.latestTotal)}`);
+  text(`Itens: ${d.itemInsights.length}`);
+  text(
+    d.totalChangeImpact === 0
+      ? "Preços praticamente iguais aos de antes."
+      : `Comparado aos preços anteriores dos mesmos itens: ${fmt(Math.abs(d.totalChangeImpact))} ${d.totalChangeImpact > 0 ? "a mais" : "a menos"}.`,
+    { gap: 6 }
+  );
+
+  text("Item a item", { size: 12, bold: true, gap: 3 });
+  d.itemInsights.forEach((it) => {
+    text(`${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ""} — ${fmt(it.price * it.quantity)}`, { bold: true, gap: 1 });
+    const notes: string[] = [];
+    notes.push(it.boughtBeforeCount > 0 ? `já comprado ${it.boughtBeforeCount}x antes` : "primeira vez que compra");
+    if (it.priceChange != null && Math.abs(it.priceChange) >= 1) {
+      notes.push(`${it.priceChange > 0 ? "+" : ""}${it.priceChange.toFixed(0)}% vs média anterior (${fmt(it.priorAvg ?? 0)})`);
+    }
+    if (it.storeInsight && Math.abs(it.storeInsight.diff) >= 1) {
+      notes.push(`${it.storeInsight.diff > 0 ? "mais caro" : "mais barato"} aqui que em outros mercados (${Math.abs(it.storeInsight.diff).toFixed(0)}%)`);
+    }
+    text(notes.join(" · "), { size: 9, color: [110, 110, 110], gap: 4 });
+  });
+
+  doc.save(`relatorio-${fileSafe(d.listLabel) || "lista"}-${d.latestDay}.pdf`);
+}
+
+function ListAnalyticalReport({ listId, listLabel, allEvents, familyName, familyBackgroundUrl, onClose }: {
+  listId: string;
+  listLabel: string;
+  allEvents: Event[];
+  familyName: string;
+  familyBackgroundUrl: string;
+  onClose: () => void;
+}) {
+  const listEvents = [...allEvents].filter((e) => e.listId === listId).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  if (listEvents.length === 0) return null;
+
+  const listStore = listEvents.find((e) => e.store)?.store ?? null;
+
+  const latestDay = listEvents.reduce((max, e) => {
+    const d = dayKey(new Date(e.date));
+    return d > max ? d : max;
+  }, "");
+  const latestBatch = listEvents.filter((e) => dayKey(new Date(e.date)) === latestDay);
+  const latestTotal = latestBatch.reduce((s, e) => s + e.price * e.quantity, 0);
+
+  // Histórico de preço por produto em toda a família (não só nessa lista) —
+  // pra saber se já foi comprado antes e comparar com outros mercados
+  const globalHistory = new Map<string, { date: string; price: number; store: string | null }[]>();
+  allEvents.forEach((e) => {
+    const k = normalize(e.name);
+    const arr = globalHistory.get(k) ?? [];
+    arr.push({ date: e.date, price: e.price, store: e.store });
+    globalHistory.set(k, arr);
+  });
+
+  const itemInsights: ItemInsight[] = latestBatch.map((e) => {
+    const pk = normalize(e.name);
+    const history = globalHistory.get(pk) ?? [];
+    const before = history.filter((h) => new Date(h.date).getTime() < new Date(e.date).getTime());
+    const boughtBeforeCount = before.length;
+    let priceChange: number | null = null;
+    let priorAvg: number | null = null;
+    if (boughtBeforeCount > 0) {
+      priorAvg = before.reduce((s, h) => s + h.price, 0) / before.length;
+      priceChange = priorAvg > 0 ? ((e.price - priorAvg) / priorAvg) * 100 : 0;
+    }
+
+    let storeInsight: ItemInsight["storeInsight"] = null;
+    if (listStore) {
+      const pricesHere = history.filter((h) => h.store && normalize(h.store) === normalize(listStore)).map((h) => h.price);
+      const pricesOther = history.filter((h) => h.store && normalize(h.store) !== normalize(listStore)).map((h) => h.price);
+      if (pricesHere.length && pricesOther.length) {
+        const avgHere = pricesHere.reduce((s, p) => s + p, 0) / pricesHere.length;
+        const avgOther = pricesOther.reduce((s, p) => s + p, 0) / pricesOther.length;
+        storeInsight = { diff: avgOther > 0 ? ((avgHere - avgOther) / avgOther) * 100 : 0, avgHere, avgOther };
+      }
+    }
+
+    return {
+      key: `${pk}-${e.date}`, name: e.name, emoji: e.emoji, quantity: e.quantity, price: e.price,
+      boughtBeforeCount, priceChange, priorAvg, storeInsight,
+    };
+  });
+
+  const totalChangeImpact = itemInsights.reduce(
+    (sum, it) => sum + (it.priceChange != null && it.priorAvg != null ? (it.price - it.priorAvg) * it.quantity : 0),
+    0
+  );
+
+  return (
+    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 400, padding: "1rem" }}>
+      <div style={{ background: "var(--bg-card)", borderRadius: 20, width: "100%", maxWidth: 640, maxHeight: "92vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Hero com imagem da família */}
+        <div style={{ position: "relative", height: 150, flexShrink: 0, overflow: "hidden" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={familyBackgroundUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.35), rgba(20,20,20,0.92))" }} />
+          <button onClick={onClose} style={{ position: "absolute", top: "0.75rem", right: "0.75rem", background: "rgba(0,0,0,0.4)", border: "none", borderRadius: "50%", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff" }}>
+            <MdClose size={18} />
+          </button>
+          <div style={{ position: "absolute", bottom: "0.9rem", left: "1.25rem", right: "1.25rem" }}>
+            <div style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.75)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {familyName ? `Família ${familyName}` : "Relatório Analítico"}
+            </div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "#fff" }}>{listLabel}</div>
+            <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.8)" }}>
+              Compra de {new Date(latestDay + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
+              {listStore ? ` · ${listStore}` : ""}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: "1.25rem", overflowY: "auto", flex: 1 }}>
+          {/* Resumo */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.6rem", marginBottom: "1.25rem" }}>
+            <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Total dessa compra</div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--text-primary)" }}>{fmt(latestTotal)}</div>
+            </div>
+            <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Itens</div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--text-primary)" }}>{itemInsights.length}</div>
+            </div>
+            <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Vs. preços de antes</div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 800, color: totalChangeImpact > 0 ? "#d06a6a" : totalChangeImpact < 0 ? "#7aab8a" : "var(--text-primary)" }}>
+                {totalChangeImpact === 0 ? "—" : `${totalChangeImpact > 0 ? "+" : "-"}${fmt(Math.abs(totalChangeImpact))}`}
+              </div>
+            </div>
+          </div>
+
+          <h4 style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.75rem" }}>Item a item</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.25rem" }}>
+            {itemInsights.map((it) => (
+              <div key={it.key} style={{ padding: "0.75rem 0.9rem", background: "var(--bg-secondary)", borderRadius: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.35rem" }}>
+                  <span style={{ fontSize: "1.1rem" }}>{it.emoji}</span>
+                  <span style={{ flex: 1, fontSize: "0.88rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                    {it.name}{it.quantity > 1 ? ` ×${it.quantity}` : ""}
+                  </span>
+                  <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--brand)" }}>{fmt(it.price * it.quantity)}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                  <span style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem", borderRadius: 999, background: it.boughtBeforeCount > 0 ? "rgba(122,171,138,0.14)" : "rgba(192,152,80,0.14)", color: it.boughtBeforeCount > 0 ? "var(--brand)" : "#c99a40", fontWeight: 700 }}>
+                    {it.boughtBeforeCount > 0 ? `Já comprado ${it.boughtBeforeCount}x antes` : "🆕 Primeira vez"}
+                  </span>
+                  {it.priceChange != null && Math.abs(it.priceChange) >= 1 && (
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.7rem", padding: "0.15rem 0.5rem", borderRadius: 999, background: it.priceChange > 0 ? "rgba(208,106,106,0.14)" : "rgba(122,171,138,0.14)", color: it.priceChange > 0 ? "#d06a6a" : "#7aab8a", fontWeight: 700 }}>
+                      {it.priceChange > 0 ? <MdTrendingUp size={11} /> : <MdTrendingDown size={11} />}
+                      {Math.abs(it.priceChange).toFixed(0)}% vs média anterior ({fmt(it.priorAvg ?? 0)})
+                    </span>
+                  )}
+                  {it.storeInsight && Math.abs(it.storeInsight.diff) >= 1 && (
+                    <span style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem", borderRadius: 999, background: "rgba(106,159,212,0.14)", color: "#6a9fd4", fontWeight: 700 }}>
+                      {it.storeInsight.diff > 0 ? "Mais caro" : "Mais barato"} aqui que em outros mercados ({Math.abs(it.storeInsight.diff).toFixed(0)}%)
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={() => exportListReportPdf({ listLabel, familyName, latestDay, latestTotal, itemInsights, totalChangeImpact, listStore })}
+            className="btn-primary"
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            <MdPictureAsPdf size={18} /> Baixar PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
