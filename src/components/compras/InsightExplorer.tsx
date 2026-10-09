@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import { MdSearch, MdClose, MdTrendingUp, MdTrendingDown, MdTrendingFlat, MdAnalytics } from "react-icons/md";
+import { MdSearch, MdClose, MdTrendingUp, MdTrendingDown, MdTrendingFlat, MdAnalytics, MdPictureAsPdf } from "react-icons/md";
 import type { ShoppingList, ShoppingItem } from "@/types";
 
 interface Category {
@@ -338,6 +338,35 @@ export function InsightPanel({ selection, events, categories, onSelect, onClose 
   const topLists = Array.from(byList.entries()).sort(([, a], [, b]) => b.total - a.total).slice(0, 5);
   const topStores = Array.from(byStore.entries()).sort(([, a], [, b]) => b.total - a.total).slice(0, 5);
 
+  // Comparado com preços anteriores — pra cada produto dessa seleção com mais
+  // de uma compra, compara o preço mais recente com a média dos preços antes dele
+  const productPriceSeries = new Map<string, { date: string; price: number; quantity: number }[]>();
+  myEvents.forEach((e) => {
+    const pk = normalize(e.name);
+    const arr = productPriceSeries.get(pk) ?? [];
+    arr.push({ date: e.date, price: e.price, quantity: e.quantity });
+    productPriceSeries.set(pk, arr);
+  });
+  const priceComparisons = Array.from(productPriceSeries.entries())
+    .filter(([, arr]) => arr.length >= 2)
+    .map(([pk, arr]) => {
+      const lastEntry = arr[arr.length - 1];
+      const priorPrices = arr.slice(0, -1).map((p) => p.price);
+      const priorAvg = priorPrices.reduce((s, p) => s + p, 0) / priorPrices.length;
+      const change = priorAvg > 0 ? ((lastEntry.price - priorAvg) / priorAvg) * 100 : 0;
+      const meta = byProduct.get(pk);
+      return {
+        key: pk, label: meta?.label ?? pk, emoji: meta?.emoji ?? "📦",
+        last: lastEntry.price, priorAvg, change, impact: (lastEntry.price - priorAvg) * lastEntry.quantity,
+      };
+    })
+    .filter((p) => Math.abs(p.change) >= 1)
+    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+
+  const pricierNow = priceComparisons.filter((p) => p.change > 0).slice(0, 5);
+  const cheaperNow = priceComparisons.filter((p) => p.change < 0).slice(0, 5);
+  const basketImpact = priceComparisons.reduce((sum, p) => sum + p.impact, 0);
+
   const trendIcon = projectionTrend === "up" ? <MdTrendingUp size={16} /> : projectionTrend === "down" ? <MdTrendingDown size={16} /> : <MdTrendingFlat size={16} />;
   const trendColor = projectionTrend === "up" ? "#d06a6a" : projectionTrend === "down" ? "#7aab8a" : "var(--text-muted)";
 
@@ -354,7 +383,20 @@ export function InsightPanel({ selection, events, categories, onSelect, onClose 
             <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>{group.label}</div>
           </div>
         </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={22} /></button>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <button
+            onClick={() => exportInsightPdf({
+              type, group, totalSpend, purchaseCount, avgPrice, share, myRank, ranked, projection, projectionTrend,
+              nextPurchaseText, basketImpact, pricierNow, cheaperNow, topProducts, topCategories, topLists, topStores,
+              firstDate, lastDate,
+            })}
+            className="btn-secondary"
+            style={{ fontSize: "0.78rem", padding: "0.4rem 0.7rem" }}
+          >
+            <MdPictureAsPdf size={16} /> PDF
+          </button>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={22} /></button>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -426,6 +468,38 @@ export function InsightPanel({ selection, events, categories, onSelect, onClose 
         </div>
       </div>
 
+      {/* Comparado com preços anteriores */}
+      {priceComparisons.length > 0 && (
+        <div style={{ marginBottom: "1.25rem" }}>
+          <h4 style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+            Comprou mais barato ou mais caro que antes?
+          </h4>
+          <p style={{
+            fontSize: "0.85rem", marginBottom: "0.75rem",
+            color: basketImpact > 0 ? "#d06a6a" : basketImpact < 0 ? "#7aab8a" : "var(--text-muted)",
+          }}>
+            {basketImpact === 0
+              ? "Os preços dos itens que se repetem ficaram praticamente iguais aos de antes."
+              : basketImpact > 0
+                ? <>Pelos preços de antes dos mesmos itens, você gastou cerca de <strong>{fmt(Math.abs(basketImpact))} a mais</strong> dessa vez.</>
+                : <>Pelos preços de antes dos mesmos itens, você economizou cerca de <strong>{fmt(Math.abs(basketImpact))}</strong> dessa vez.</>}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            {[...pricierNow, ...cheaperNow].map((p) => (
+              <div key={p.key} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.3rem 0" }}>
+                <span style={{ fontSize: "0.95rem", flexShrink: 0 }}>{p.emoji}</span>
+                <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{fmt(p.priorAvg)} → {fmt(p.last)}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: "0.15rem", color: p.change > 0 ? "#d06a6a" : "#7aab8a", fontSize: "0.78rem", fontWeight: 700, flexShrink: 0, minWidth: 48, justifyContent: "flex-end" }}>
+                  {p.change > 0 ? <MdTrendingUp size={13} /> : <MdTrendingDown size={13} />}
+                  {Math.abs(p.change).toFixed(0)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Detalhamento por tipo */}
       {type !== "product" && topProducts.length > 0 && (
         <DetailList title="Produtos" rows={topProducts.map(([k, p]) => ({ key: k, label: p.label, emoji: p.emoji, total: p.total, sub: `${p.count}x` }))}
@@ -477,4 +551,103 @@ function DetailList({ title, rows, onPick }: {
       </div>
     </div>
   );
+}
+
+interface PdfExportData {
+  type: DimType;
+  group: { label: string };
+  totalSpend: number;
+  purchaseCount: number;
+  avgPrice: number;
+  share: number;
+  myRank: number;
+  ranked: { label: string; total: number }[];
+  projection: number;
+  projectionTrend: "up" | "down" | "flat";
+  nextPurchaseText: string | null;
+  basketImpact: number;
+  pricierNow: { label: string; priorAvg: number; last: number; change: number }[];
+  cheaperNow: { label: string; priorAvg: number; last: number; change: number }[];
+  topProducts: [string, { label: string; total: number }][];
+  topCategories: [string, { label: string; total: number }][];
+  topLists: [string, { label: string; total: number }][];
+  topStores: [string, { label: string; total: number }][];
+  firstDate: Date;
+  lastDate: Date;
+}
+
+async function exportInsightPdf(d: PdfExportData) {
+  const { default: jsPDF } = await import("jspdf");
+  const doc = new jsPDF();
+  const marginX = 16;
+  const pageWidth = 210;
+  const pageHeight = 297;
+  const maxWidth = pageWidth - marginX * 2;
+  let y = 20;
+
+  function ensureSpace(lines: number, lineHeight: number) {
+    if (y + lines * lineHeight > pageHeight - 15) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function text(str: string, opts: { size?: number; bold?: boolean; color?: [number, number, number]; gap?: number } = {}) {
+    const size = opts.size ?? 10;
+    doc.setFontSize(size);
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+    const [r, g, b] = opts.color ?? [30, 30, 30];
+    doc.setTextColor(r, g, b);
+    const lineHeight = size * 0.42;
+    const lines = doc.splitTextToSize(str, maxWidth);
+    ensureSpace(lines.length, lineHeight);
+    doc.text(lines, marginX, y);
+    y += lines.length * lineHeight + (opts.gap ?? 2);
+  }
+
+  function section(title: string, rows: [string, { label: string; total: number }][]) {
+    if (!rows.length) return;
+    text(title, { size: 12, bold: true, gap: 3 });
+    rows.forEach(([, r]) => text(`• ${r.label} — ${fmt(r.total)}`));
+    y += 4;
+  }
+
+  text(`Análise completa — ${dimLabels[d.type].label}`, { size: 11, bold: true, color: [90, 140, 110] });
+  text(d.group.label, { size: 16, bold: true, gap: 1 });
+  text(`Primeira compra em ${d.firstDate.toLocaleDateString("pt-BR")} · última em ${d.lastDate.toLocaleDateString("pt-BR")}`, { size: 9, color: [120, 120, 120], gap: 6 });
+
+  text("Resumo", { size: 12, bold: true, gap: 3 });
+  text(`Total gasto: ${fmt(d.totalSpend)}`);
+  text(`${d.type === "product" ? "Vezes comprado" : "Compras"}: ${d.purchaseCount}`);
+  text(`${d.type === "product" ? "Preço médio" : "Ticket médio"}: ${fmt(d.type === "product" ? d.avgPrice : d.totalSpend / d.purchaseCount)}`);
+  text(`Participação: ${d.share.toFixed(0)}%${d.myRank > 0 ? ` (${d.myRank}º lugar entre ${d.ranked.length})` : ""}`, { gap: 6 });
+
+  text("Previsão", { size: 12, bold: true, gap: 3 });
+  const trendWord = d.projectionTrend === "up" ? "em alta" : d.projectionTrend === "down" ? "em queda" : "estável";
+  text(`Tendência ${trendWord} — previsão de gastar cerca de ${fmt(d.projection)} no próximo mês.`);
+  text(d.nextPurchaseText ?? "Sem compras suficientes pra estimar a próxima.", { gap: 6 });
+
+  text(`Comparado com ${dimLabels[d.type].plural.toLowerCase()}`, { size: 12, bold: true, gap: 3 });
+  d.ranked.slice(0, 10).forEach((g, idx) => {
+    text(`${idx + 1}. ${g.label} — ${fmt(g.total)}`);
+  });
+  y += 4;
+
+  if (d.pricierNow.length || d.cheaperNow.length) {
+    text("Comprou mais barato ou mais caro que antes?", { size: 12, bold: true, gap: 3 });
+    const impactWord = d.basketImpact > 0 ? "a mais" : "a menos";
+    text(`Baseado nos preços anteriores dos mesmos itens: ${fmt(Math.abs(d.basketImpact))} ${impactWord} nessa seleção.`, { gap: 4 });
+    [...d.pricierNow, ...d.cheaperNow].forEach((p) => {
+      text(`${p.label}: ${fmt(p.priorAvg)} → ${fmt(p.last)} (${p.change > 0 ? "+" : ""}${p.change.toFixed(0)}%)`);
+    });
+    y += 4;
+  }
+
+  section("Produtos", d.topProducts);
+  section("Categorias", d.topCategories);
+  section("Listas", d.topLists);
+  section("Mercados", d.topStores);
+
+  const fileSafeLabel = d.group.label.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+  doc.save(`analise-${fileSafeLabel || d.type}.pdf`);
 }
