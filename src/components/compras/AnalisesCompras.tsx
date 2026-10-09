@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import { MdTrendingUp, MdTrendingDown, MdShoppingCart, MdReceiptLong, MdClose } from "react-icons/md";
 import type { ShoppingList, ShoppingItem } from "@/types";
+import { useShoppingEvents, ExplorerPicker, InsightPanel, type Selection } from "./InsightExplorer";
 
 interface Category {
   name: string;
@@ -54,27 +55,13 @@ interface ItemHistoryEntry {
   category: string;
   points: ItemPoint[];
 }
-interface PurchaseItem {
-  name: string;
-  emoji: string;
-  quantity: number;
-  unit: string;
-  price: number;
-}
-interface Purchase {
-  key: string;
-  date: string;
-  listName: string;
-  items: PurchaseItem[];
-  total: number;
-}
 
 export function AnalisesCompras({ items, lists, categories }: Props) {
   const [period, setPeriod] = useState<Period>("6m");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
-  const [selectedPurchaseKey, setSelectedPurchaseKey] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
 
+  const allEvents = useShoppingEvents(items, lists);
   const categoryMap = new Map(categories.map((c) => [c.name, c]));
   const allBought = items.filter((i) => i.checked && i.actual_price != null && i.checked_at);
   const spend = (i: ShoppingItem) => (i.actual_price ?? 0) * i.quantity;
@@ -119,10 +106,9 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
   const dayTotals = new Map<string, number>();
   const monthTotals = new Map<string, number>();
   const categoryTotals = new Map<string, number>();
-  const listTotals = new Map<string, number>();
+  const listTotals = new Map<string, { name: string; total: number }>();
   const itemTotals = new Map<string, { name: string; emoji: string; category: string; spend: number; count: number }>();
   const itemHistory = new Map<string, ItemHistoryEntry>();
-  const purchaseMap = new Map<string, Purchase>();
   let totalPeriod = 0;
 
   bought.forEach((i) => {
@@ -136,8 +122,11 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
     const cat = i.category ?? "Outros";
     categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + s);
 
-    const listName = lists.find((l) => l.id === i.list_id)?.name ?? "Outra lista";
-    listTotals.set(listName, (listTotals.get(listName) ?? 0) + s);
+    const list = lists.find((l) => l.id === i.list_id);
+    const listName = list?.name ?? "Outra lista";
+    const lt = listTotals.get(i.list_id) ?? { name: listName, total: 0 };
+    lt.total += s;
+    listTotals.set(i.list_id, lt);
 
     const key = i.name.trim().toLowerCase();
     const entry = itemTotals.get(key) ?? { name: i.name, emoji: i.emoji ?? "📦", category: cat, spend: 0, count: 0 };
@@ -148,16 +137,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
     const hist = itemHistory.get(key) ?? { name: i.name, emoji: i.emoji ?? "📦", category: cat, points: [] };
     hist.points.push({ date: i.checked_at!, price: i.actual_price ?? 0, quantity: i.quantity, listName });
     itemHistory.set(key, hist);
-
-    const purchaseKey = `${i.list_id}|${dayKey(checkedDate)}`;
-    const purchase = purchaseMap.get(purchaseKey) ?? { key: purchaseKey, date: i.checked_at!, listName, items: [], total: 0 };
-    purchase.items.push({ name: i.name, emoji: i.emoji ?? "📦", quantity: i.quantity, unit: i.unit, price: i.actual_price ?? 0 });
-    purchase.total += s;
-    purchaseMap.set(purchaseKey, purchase);
   });
-
-  const purchases = Array.from(purchaseMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const selectedPurchase = selectedPurchaseKey ? purchaseMap.get(selectedPurchaseKey) ?? null : null;
 
   const ticketMedio = dayTotals.size > 0 ? totalPeriod / dayTotals.size : 0;
 
@@ -181,7 +161,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
     .sort((a, b) => b.total - a.total);
 
   const listChart = Array.from(listTotals.entries())
-    .map(([name, total]) => ({ name, total }))
+    .map(([id, { name, total }]) => ({ id, name, total }))
     .sort((a, b) => b.total - a.total);
 
   const topItems = Array.from(itemTotals.values())
@@ -205,21 +185,20 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
   const gettingPricier = priceTrends.filter((e) => e.change > 0).sort((a, b) => b.change - a.change).slice(0, 5);
   const gettingCheaper = priceTrends.filter((e) => e.change < 0).sort((a, b) => a.change - b.change).slice(0, 3);
 
-  const selectedItem = selectedItemKey ? itemHistory.get(selectedItemKey) : null;
-  const selectedItemStats = selectedItem ? (() => {
-    const prices = selectedItem.points.map((p) => p.price);
-    const totalSpend = selectedItem.points.reduce((s, p) => s + p.price * p.quantity, 0);
-    return {
-      min: Math.min(...prices),
-      max: Math.max(...prices),
-      avg: prices.reduce((s, p) => s + p, 0) / prices.length,
-      total: totalSpend,
-      count: selectedItem.points.length,
-    };
-  })() : null;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+      {/* Explorar e analisar — selecione lista, produto, categoria ou mercado */}
+      <ExplorerPicker events={allEvents} categories={categories} selection={selection} onSelect={setSelection} />
+      {selection && (
+        <InsightPanel
+          selection={selection}
+          events={allEvents}
+          categories={categories}
+          onSelect={setSelection}
+          onClose={() => setSelection(null)}
+        />
+      )}
+
       {/* Seletor de período */}
       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
         {periodOptions.map((p) => (
@@ -319,7 +298,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
               )}
             </div>
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-1rem", marginBottom: "1rem" }}>
-              Toque numa categoria pra ver só os itens dela na lista abaixo
+              Toque numa categoria pra filtrar os itens abaixo, ou toque de novo pra ver a análise completa dela
             </p>
             <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ width: 140, height: 140, flexShrink: 0 }}>
@@ -327,7 +306,10 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
                   <PieChart>
                     <Pie
                       data={categoryChart} dataKey="total" nameKey="name" innerRadius={35} outerRadius={65} paddingAngle={2}
-                      onClick={(d) => setSelectedCategory((prev) => prev === d.name ? null : d.name)}
+                      onClick={(d) => {
+                        if (selectedCategory === d.name) setSelection({ type: "category", key: d.name });
+                        else setSelectedCategory(d.name);
+                      }}
                       style={{ cursor: "pointer" }}
                     >
                       {categoryChart.map((c) => (
@@ -342,7 +324,10 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
                 {categoryChart.map((c) => (
                   <div
                     key={c.name}
-                    onClick={() => setSelectedCategory((prev) => prev === c.name ? null : c.name)}
+                    onClick={() => {
+                      if (selectedCategory === c.name) setSelection({ type: "category", key: c.name });
+                      else setSelectedCategory(c.name);
+                    }}
                     style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", opacity: !selectedCategory || selectedCategory === c.name ? 1 : 0.45 }}
                   >
                     <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
@@ -360,16 +345,19 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
           {/* Por lista */}
           {listChart.length > 1 && (
             <div className="card" style={{ padding: "1.25rem" }}>
-              <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "1rem" }}>
+              <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
                 Gastos por lista
               </h3>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                Toque numa lista pra ver a análise completa dela
+              </p>
               <div style={{ width: "100%", height: Math.max(120, listChart.length * 44) }}>
                 <ResponsiveContainer>
                   <BarChart data={listChart} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                     <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${v}`} />
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={110} />
                     <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                    <Bar dataKey="total" radius={[0, 6, 6, 0]}>
+                    <Bar dataKey="total" radius={[0, 6, 6, 0]} onClick={(d) => setSelection({ type: "list", key: (d as unknown as { id: string }).id })} style={{ cursor: "pointer" }}>
                       {listChart.map((_, idx) => <Cell key={idx} fill={listColors[idx % listColors.length]} />)}
                     </Bar>
                   </BarChart>
@@ -378,54 +366,19 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
             </div>
           )}
 
-          {/* Por compra */}
-          <div className="card" style={{ padding: "1.25rem" }}>
-            <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
-              Por compra
-            </h3>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-              Cada ida ao mercado, com o total e os itens dessa compra. Toque pra ver o detalhe.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
-              {purchases.map((p) => (
-                <div
-                  key={p.key}
-                  onClick={() => setSelectedPurchaseKey(p.key)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer",
-                    padding: "0.6rem 0", borderBottom: "1px solid var(--border-light)",
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                      {new Date(p.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}
-                    </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{p.listName} · {p.items.length} {p.items.length === 1 ? "item" : "itens"}</div>
-                  </div>
-                  <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--brand)", flexShrink: 0 }}>{fmt(p.total)}</div>
-                </div>
-              ))}
-              {purchases.length === 0 && (
-                <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                  Nenhuma compra com valor registrado nesse período.
-                </div>
-              )}
-            </div>
-          </div>
-
           {/* Itens mais comprados */}
           <div className="card" style={{ padding: "1.25rem" }}>
             <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
               Itens que mais pesam no bolso{selectedCategory ? ` — ${selectedCategory}` : ""}
             </h3>
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-              Toque num item pra ver o histórico completo de compras
+              Toque num item pra ver a análise completa dele
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
               {topItems.map((it, idx) => (
                 <div
                   key={it.name}
-                  onClick={() => setSelectedItemKey(it.name.trim().toLowerCase())}
+                  onClick={() => setSelection({ type: "product", key: it.name.trim().toLowerCase() })}
                   style={{ display: "flex", alignItems: "center", gap: "0.7rem", cursor: "pointer" }}
                 >
                   <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", width: 16, flexShrink: 0 }}>{idx + 1}</span>
@@ -460,7 +413,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
                 {gettingPricier.map((e) => (
                   <div
                     key={e.name}
-                    onClick={() => setSelectedItemKey(e.name.trim().toLowerCase())}
+                    onClick={() => setSelection({ type: "product", key: e.name.trim().toLowerCase() })}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -503,7 +456,7 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
                     {gettingCheaper.map((e) => (
                       <div
                         key={e.name}
-                        onClick={() => setSelectedItemKey(e.name.trim().toLowerCase())}
+                        onClick={() => setSelection({ type: "product", key: e.name.trim().toLowerCase() })}
                         style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer" }}
                       >
                         <span style={{ fontSize: "0.95rem", flexShrink: 0 }}>{e.emoji}</span>
@@ -523,99 +476,6 @@ export function AnalisesCompras({ items, lists, categories }: Props) {
             </div>
           )}
         </>
-      )}
-
-      {/* Modal de detalhe do item */}
-      {selectedItem && selectedItemStats && (
-        <div onClick={(e) => e.target === e.currentTarget && setSelectedItemKey(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
-          <div style={{ background: "var(--bg-card)", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 560, padding: "1.5rem", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-            <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem", flexShrink: 0 }} />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                <span style={{ fontSize: "1.4rem" }}>{selectedItem.emoji}</span>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--text-primary)" }}>{selectedItem.name}</div>
-                  <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selectedItem.category}</div>
-                </div>
-              </div>
-              <button onClick={() => setSelectedItemKey(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.5rem", marginBottom: "1.25rem", flexShrink: 0 }}>
-              {[
-                { label: "Total gasto", value: fmt(selectedItemStats.total) },
-                { label: "Compras", value: String(selectedItemStats.count) },
-                { label: "Menor preço", value: fmt(selectedItemStats.min) },
-                { label: "Maior preço", value: fmt(selectedItemStats.max) },
-              ].map((s) => (
-                <div key={s.label} style={{ textAlign: "center", padding: "0.5rem 0.25rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.15rem" }}>{s.label}</div>
-                  <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-primary)" }}>{s.value}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.6rem" }}>
-                Histórico de compras
-              </div>
-              {[...selectedItem.points].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((p, idx) => (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0", borderBottom: "1px solid var(--border-light)" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                      {new Date(p.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}
-                    </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{p.listName} · {p.quantity > 1 ? `${p.quantity}x` : "1x"}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--brand)" }}>{fmt(p.price)}{p.quantity > 1 ? "/un" : ""}</div>
-                    {p.quantity > 1 && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{fmt(p.price * p.quantity)} total</div>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de detalhe da compra */}
-      {selectedPurchase && (
-        <div onClick={(e) => e.target === e.currentTarget && setSelectedPurchaseKey(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}>
-          <div style={{ background: "var(--bg-card)", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 560, padding: "1.5rem", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-            <div style={{ width: 44, height: 5, borderRadius: 99, background: "var(--border)", margin: "0 auto 1.25rem", flexShrink: 0 }} />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexShrink: 0 }}>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--text-primary)" }}>
-                  {new Date(selectedPurchase.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
-                </div>
-                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{selectedPurchase.listName}</div>
-              </div>
-              <button onClick={() => setSelectedPurchaseKey(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={20} /></button>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.6rem 0.75rem", background: "var(--bg-secondary)", borderRadius: 10, marginBottom: "1.1rem", flexShrink: 0 }}>
-              <span style={{ fontSize: "0.82rem", color: "var(--text-muted)", fontWeight: 600 }}>{selectedPurchase.items.length} {selectedPurchase.items.length === 1 ? "item" : "itens"}</span>
-              <span style={{ fontSize: "1rem", fontWeight: 800, color: "var(--brand)" }}>{fmt(selectedPurchase.total)}</span>
-            </div>
-
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              {selectedPurchase.items.map((it, idx) => (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0", borderBottom: "1px solid var(--border-light)" }}>
-                  <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>{it.emoji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {it.name}{it.quantity > 1 && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> ×{it.quantity}{it.unit !== "unid" ? ` ${it.unit}` : ""}</span>}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>{fmt(it.price * it.quantity)}</div>
-                    {it.quantity > 1 && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{fmt(it.price)}/un</div>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

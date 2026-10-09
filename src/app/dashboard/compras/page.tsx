@@ -100,6 +100,7 @@ export default function ComprasPage() {
 
   const [newListModal, setNewListModal] = useState(false);
   const [newListName, setNewListName] = useState("");
+  const [newListStore, setNewListStore] = useState("");
   const [creatingList, setCreatingList] = useState(false);
 
   const [bulkModal, setBulkModal] = useState(false);
@@ -305,6 +306,7 @@ export default function ComprasPage() {
 
   async function addList() {
     const trimmed = newListName.trim();
+    const store = newListStore.trim();
     if (!trimmed) return;
     if (!familyId || !memberId) {
       showToast("Ainda carregando sua família, tente de novo em instantes");
@@ -317,7 +319,7 @@ export default function ComprasPage() {
       const id = crypto.randomUUID();
       const { error } = await supabase
         .from("acalanto_shopping_lists")
-        .insert({ id, family_id: familyId, name: trimmed, created_by: memberId });
+        .insert({ id, family_id: familyId, name: trimmed, store: store || null, created_by: memberId });
 
       if (error) {
         showToast("Erro ao criar lista. Tente novamente.");
@@ -329,6 +331,7 @@ export default function ComprasPage() {
         family_id: familyId,
         name: trimmed,
         status: "open",
+        store: store || undefined,
         created_by: memberId,
         created_at: new Date().toISOString(),
       };
@@ -337,6 +340,7 @@ export default function ComprasPage() {
       setNewListId(newList.id);
       showToast(`Lista "${trimmed}" criada!`);
       setNewListName("");
+      setNewListStore("");
       setNewListModal(false);
     } catch {
       showToast("Erro ao criar lista. Tente novamente.");
@@ -922,6 +926,12 @@ export default function ComprasPage() {
               autoFocus type="text" value={newListName} onChange={(e) => setNewListName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addList()}
               placeholder="Ex: Mãe da Morgana, Farmácia..."
+              className="input-field" style={{ marginBottom: "0.75rem" }}
+            />
+            <input
+              type="text" value={newListStore} onChange={(e) => setNewListStore(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addList()}
+              placeholder="Mercado onde essa lista é comprada (opcional)"
               className="input-field" style={{ marginBottom: "1rem" }}
             />
             <button onClick={addList} disabled={!newListName.trim() || creatingList} className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: newListName.trim() ? 1 : 0.5 }}>
