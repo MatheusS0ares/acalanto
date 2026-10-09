@@ -5,7 +5,7 @@ import {
   MdAttachMoney, MdDescription, MdShoppingCart,
   MdCheckBox, MdCalendarMonth, MdFavorite, MdDirectionsCar,
   MdContactPhone, MdKitchen, MdTrendingUp, MdTrendingDown,
-  MdRestaurant, MdBuild,
+  MdRestaurant, MdBuild, MdWarning, MdArrowForward,
   MdLock, MdPhotoLibrary, MdPets,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
@@ -28,7 +28,7 @@ interface Module {
 const modules: Module[] = [
   { href: "/dashboard/compras",     icon: MdShoppingCart,  label: "Lista de Compras", desc: "Adicione itens e marque o que já comprou",   color: "#a07acc", badgeColor: "purple", group: "casa", quick: { label: "Comprar algo" } },
   { href: "/dashboard/financeiro",  icon: MdAttachMoney,   label: "Financeiro",       desc: "Gastos, entradas e planejamento do mês",      color: "#7aab8a", group: "casa", quick: { label: "Registrar gasto" } },
-  { href: "/dashboard/mantimentos", icon: MdKitchen,       label: "Dispensa",         desc: "O que está em falta na despensa",              color: "#c99a40", group: "casa" },
+  { href: "/dashboard/mantimentos", icon: MdKitchen,       label: "Dispensa",         desc: "O que está em falta na despensa",              color: "#c99a40", badgeColor: "yellow", group: "casa" },
   { href: "/dashboard/cardapio",    icon: MdRestaurant,    label: "Cardápio",         desc: "O que vai ter de almoço e jantar",             color: "#d07a6a", group: "casa", quick: { label: "Ver cardápio" } },
   { href: "/dashboard/reformas",    icon: MdBuild,         label: "Obras",            desc: "Reformas e melhorias da casa",                 color: "#7888d0", group: "casa" },
   { href: "/dashboard/tarefas",     icon: MdCheckBox,      label: "Tarefas",          desc: "Veja e conclua as tarefas da casa",            color: "#5aabb0", group: "familia", quick: { label: "Nova tarefa" } },
@@ -37,7 +37,7 @@ const modules: Module[] = [
   { href: "/dashboard/pets",        icon: MdPets,          label: "Pets",             desc: "Vacinas, vet e cuidados dos animais",          color: "#88aa40", group: "familia" },
   { href: "/dashboard/memorias",    icon: MdPhotoLibrary,  label: "Memórias",         desc: "Fotos e momentos especiais da família",        color: "#c07898", group: "familia" },
   { href: "/dashboard/documentos",  icon: MdDescription,   label: "Documentos",       desc: "Guarde documentos importantes com segurança", color: "#6a9fd4", group: "seguranca" },
-  { href: "/dashboard/veiculos",    icon: MdDirectionsCar, label: "Veículos",         desc: "IPVA, revisão e seguro dos carros",            color: "#8a96a0", group: "seguranca" },
+  { href: "/dashboard/veiculos",    icon: MdDirectionsCar, label: "Veículos",         desc: "IPVA, revisão e seguro dos carros",            color: "#8a96a0", badgeColor: "yellow", group: "seguranca" },
   { href: "/dashboard/contatos",    icon: MdContactPhone,  label: "Emergência",       desc: "Telefones e contatos importantes",             color: "#d07a6a", group: "seguranca" },
   { href: "/dashboard/senhas",      icon: MdLock,          label: "Cofre de Senhas",  desc: "Senhas guardadas com segurança",               color: "#7888d0", group: "seguranca" },
 ];
@@ -55,6 +55,10 @@ interface DashStats {
   gastosHojeTotal: number;
   gastosHojeCount: number;
   listaAberta: number;
+  tarefasDone: number;
+  tarefasTotal: number;
+  pantryLow: number;
+  ipvaDays: number | null;
 }
 
 function todayStr() {
@@ -92,7 +96,7 @@ export default function DashboardPage() {
       if (!member) return;
       setMemberName(member.name.split(" ")[0]);
 
-      const [{ data: txRows }, { data: listRows }] = await Promise.all([
+      const [{ data: txRows }, { data: listRows }, { data: taskRows }, { data: pantryRows }, { data: vehicleRows }] = await Promise.all([
         supabase
           .from("acalanto_transactions")
           .select("type, amount, date")
@@ -102,6 +106,18 @@ export default function DashboardPage() {
           .select("id")
           .eq("family_id", member.family_id)
           .neq("status", "done"),
+        supabase
+          .from("acalanto_tasks")
+          .select("status")
+          .eq("family_id", member.family_id),
+        supabase
+          .from("acalanto_pantry_items")
+          .select("current_quantity, min_quantity")
+          .eq("family_id", member.family_id),
+        supabase
+          .from("acalanto_vehicles")
+          .select("ipva_due")
+          .eq("family_id", member.family_id),
       ]);
 
       const transactions: Pick<Transaction, "type" | "amount" | "date">[] = txRows ?? [];
@@ -126,7 +142,19 @@ export default function DashboardPage() {
         listaAberta = items.filter((i) => !i.checked).length;
       }
 
-      setStats({ saldoMes, gastosHojeTotal, gastosHojeCount: gastosHoje.length, listaAberta });
+      const tasks: { status: string }[] = taskRows ?? [];
+      const tarefasDone = tasks.filter((t) => t.status === "done").length;
+
+      const pantryItems: { current_quantity: number; min_quantity: number }[] = pantryRows ?? [];
+      const pantryLow = pantryItems.filter((i) => i.current_quantity < i.min_quantity).length;
+
+      const vehicles: { ipva_due: string | null }[] = vehicleRows ?? [];
+      const ipvaDaysList = vehicles
+        .filter((v): v is { ipva_due: string } => !!v.ipva_due)
+        .map((v) => Math.ceil((new Date(v.ipva_due).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+      const ipvaDays = ipvaDaysList.length ? Math.min(...ipvaDaysList) : null;
+
+      setStats({ saldoMes, gastosHojeTotal, gastosHojeCount: gastosHoje.length, listaAberta, tarefasDone, tarefasTotal: tasks.length, pantryLow, ipvaDays });
     }
     load();
   }, []);
@@ -191,6 +219,57 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Alerta */}
+      {stats && stats.pantryLow > 0 && (
+        <div
+          className="dash-fade"
+          style={{
+            animationDelay: `${nextDelay()}ms`,
+            background: "rgba(201,154,64,0.1)", border: "1.5px solid rgba(201,154,64,0.3)",
+            borderRadius: 14, padding: "1rem 1.125rem",
+            display: "flex", alignItems: "center", gap: "0.875rem", marginBottom: "2rem",
+          }}
+        >
+          <MdWarning size={24} color="#c99a40" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.95rem", color: "#c99a40", fontWeight: 700 }}>
+              ⚠️ {stats.pantryLow} {stats.pantryLow === 1 ? "item em falta" : "itens em falta"} na dispensa
+            </div>
+          </div>
+          <Link href="/dashboard/mantimentos" style={{
+            fontSize: "0.85rem", color: "#c99a40", textDecoration: "none",
+            fontWeight: 700, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.25rem",
+          }}>
+            Ver tudo <MdArrowForward size={16} />
+          </Link>
+        </div>
+      )}
+
+      {stats && stats.ipvaDays !== null && stats.ipvaDays <= 30 && (
+        <div
+          className="dash-fade"
+          style={{
+            animationDelay: `${nextDelay()}ms`,
+            background: "rgba(201,154,64,0.1)", border: "1.5px solid rgba(201,154,64,0.3)",
+            borderRadius: 14, padding: "1rem 1.125rem",
+            display: "flex", alignItems: "center", gap: "0.875rem", marginBottom: "2rem",
+          }}
+        >
+          <MdWarning size={24} color="#c99a40" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.95rem", color: "#c99a40", fontWeight: 700 }}>
+              {stats.ipvaDays <= 0 ? "⚠️ IPVA de um veículo venceu" : `⚠️ IPVA do carro vence em ${stats.ipvaDays} dias`}
+            </div>
+          </div>
+          <Link href="/dashboard/veiculos" style={{
+            fontSize: "0.85rem", color: "#c99a40", textDecoration: "none",
+            fontWeight: 700, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.25rem",
+          }}>
+            Ver tudo <MdArrowForward size={16} />
+          </Link>
+        </div>
+      )}
+
       {/* Números rápidos */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.875rem", marginBottom: "2.25rem" }}>
         {[
@@ -209,8 +288,8 @@ export default function DashboardPage() {
           },
           {
             label: "Tarefas feitas",
-            value: "—",
-            sub: "Em breve",
+            value: stats ? `${stats.tarefasDone} de ${stats.tarefasTotal}` : "—",
+            sub: stats ? "No total" : "Carregando...",
             icon: MdCheckBox, color: "#5aabb0",
           },
           {
@@ -254,6 +333,10 @@ export default function DashboardPage() {
             {modules.filter((m) => m.group === groupKey).map(({ href, icon: Icon, label, desc, badge: staticBadge, badgeColor, color }) => {
               const badge = href === "/dashboard/compras" && stats
                 ? `${stats.listaAberta} ${stats.listaAberta === 1 ? "item" : "itens"}`
+                : href === "/dashboard/mantimentos" && stats && stats.pantryLow > 0
+                ? `${stats.pantryLow} em falta`
+                : href === "/dashboard/veiculos" && stats && stats.ipvaDays !== null && stats.ipvaDays <= 30
+                ? (stats.ipvaDays <= 0 ? "IPVA vencido" : `IPVA em ${stats.ipvaDays}d`)
                 : staticBadge;
               return (
               <Link key={href} href={href} style={{ textDecoration: "none" }}>

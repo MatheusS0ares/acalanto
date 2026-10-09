@@ -392,16 +392,20 @@ export default function ComprasPage() {
 
   function generateReport() {
     const now = new Date().toLocaleString("pt-BR");
-    let text = `📋 RELATÓRIO DE COMPRAS\n🗓️ ${now}\n${"─".repeat(32)}\n\n`;
+    const targetLists = listFilter === "all" ? lists : lists.filter((l) => l.id === listFilter);
+    const targetItems = listFilter === "all" ? items : items.filter((i) => i.list_id === listFilter);
+    const scopeLabel = listFilter === "all" ? "TODAS AS LISTAS" : listName(listFilter).toUpperCase();
 
-    lists.forEach((list) => {
-      const listItems = items.filter((i) => i.list_id === list.id);
+    let text = `📋 RELATÓRIO DE COMPRAS — ${scopeLabel}\n🗓️ ${now}\n${"─".repeat(32)}\n\n`;
+
+    targetLists.forEach((list) => {
+      const listItems = targetItems.filter((i) => i.list_id === list.id);
       if (!listItems.length) return;
       const done = listItems.filter((i) => i.checked);
       const pending = listItems.filter((i) => !i.checked);
       const subtotal = done.filter((i) => i.actual_price != null).reduce((s, i) => s + (i.actual_price ?? 0) * i.quantity, 0);
 
-      text += `🗂️ ${list.name.toUpperCase()}\n${"─".repeat(24)}\n`;
+      if (listFilter === "all") text += `🗂️ ${list.name.toUpperCase()}\n${"─".repeat(24)}\n`;
       if (done.length) {
         text += `✅ Comprados (${done.length})\n`;
         done.forEach((i) => {
@@ -424,8 +428,8 @@ export default function ComprasPage() {
       text += "\n";
     });
 
-    const grand = items.filter((i) => i.checked && i.actual_price != null).reduce((s, i) => s + (i.actual_price ?? 0) * i.quantity, 0);
-    text += `${"═".repeat(32)}\n✅ Total comprados: ${items.filter((i) => i.checked).length}/${items.length}\n`;
+    const grand = targetItems.filter((i) => i.checked && i.actual_price != null).reduce((s, i) => s + (i.actual_price ?? 0) * i.quantity, 0);
+    text += `${"═".repeat(32)}\n✅ Total comprados: ${targetItems.filter((i) => i.checked).length}/${targetItems.length}\n`;
     if (grand > 0) text += `💰 Total geral: ${fmt(grand)}\n`;
     text += `${"═".repeat(32)}\n`;
 
@@ -504,7 +508,7 @@ export default function ComprasPage() {
             className="btn-secondary"
             style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}
           >
-            <MdDescription size={16} /> Relatório
+            <MdDescription size={16} /> {listFilter === "all" ? "Relatório geral" : "Relatório desta lista"}
           </button>
         )}
       </div>

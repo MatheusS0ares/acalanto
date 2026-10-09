@@ -1,28 +1,57 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MdAdd, MdWarning, MdCheckCircle, MdShoppingCart } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
 
 const categories = ["Todos", "Grãos", "Laticínios", "Carnes", "Higiene", "Limpeza", "Bebidas", "Outros"];
 const units = ["unid", "kg", "g", "L", "ml", "rolo", "cx", "pct"];
 
-const mockItems = [
-  { id: "1", name: "Arroz", category: "Grãos", unit: "kg", current: 2, min: 3, emoji: "🍚" },
-  { id: "2", name: "Feijão", category: "Grãos", unit: "kg", current: 1, min: 2, emoji: "🫘" },
-  { id: "3", name: "Leite", category: "Laticínios", unit: "L", current: 0, min: 4, emoji: "🥛" },
-  { id: "4", name: "Ovos", category: "Laticínios", unit: "unid", current: 12, min: 6, emoji: "🥚" },
-  { id: "5", name: "Sabão em pó", category: "Limpeza", unit: "kg", current: 0.5, min: 1, emoji: "🧴" },
-  { id: "6", name: "Papel higiênico", category: "Higiene", unit: "rolo", current: 8, min: 4, emoji: "🧻" },
-  { id: "7", name: "Azeite", category: "Outros", unit: "ml", current: 250, min: 500, emoji: "🫙" },
-  { id: "8", name: "Café", category: "Bebidas", unit: "g", current: 500, min: 500, emoji: "☕" },
-  { id: "9", name: "Açúcar", category: "Grãos", unit: "kg", current: 3, min: 2, emoji: "🍬" },
-  { id: "10", name: "Macarrão", category: "Grãos", unit: "kg", current: 1, min: 1, emoji: "🍝" },
-];
+interface PantryItemRow {
+  id: string;
+  family_id: string;
+  name: string;
+  category: string;
+  unit: string;
+  current_quantity: number;
+  min_quantity: number;
+  emoji: string;
+}
 
 export default function MantimentosPage() {
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [memberId, setMemberId] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("Todos");
   const [showModal, setShowModal] = useState(false);
-  const [items, setItems] = useState(mockItems);
+  const [items, setItems] = useState<PantryItemRow[]>([]);
   const [toast, setToast] = useState("");
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("id, family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+
+    setFamilyId(me.family_id);
+    setMemberId(me.id);
+
+    const { data: rows } = await supabase
+      .from("acalanto_pantry_items")
+      .select("id, family_id, name, category, unit, current_quantity, min_quantity, emoji")
+      .eq("family_id", me.family_id)
+      .order("name");
+    setItems(rows ?? []);
+    setLoading(false);
+  }
 
   function showToast(msg: string) {
     setToast(msg);
@@ -33,16 +62,73 @@ export default function MantimentosPage() {
     categoryFilter === "Todos" || item.category === categoryFilter
   );
 
-  const low = filtered.filter((i) => i.current < i.min);
-  const ok = filtered.filter((i) => i.current >= i.min);
+  const low = filtered.filter((i) => i.current_quantity < i.min_quantity);
+  const ok = filtered.filter((i) => i.current_quantity >= i.min_quantity);
 
-  function handleAddToList(name: string) {
-    showToast(`🛒 "${name}" adicionado à lista de compras!`);
+  async function handleAddToList(item: PantryItemRow) {
+    const supabase = createClient();
+    let { data: list } = await supabase
+      .from("acalanto_shopping_lists")
+      .select("id")
+      .eq("family_id", familyId)
+      .eq("status", "open")
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+
+    if (!list) {
+      const listId = crypto.randomUUID();
+      const { error } = await supabase
+        .from("acalanto_shopping_lists")
+        .insert({ id: listId, family_id: familyId, name: "Nossa lista", created_by: memberId });
+      if (error) { showToast("Erro ao criar a lista de compras"); return; }
+      list = { id: listId };
+    }
+
+    const qty = Math.max(item.min_quantity - item.current_quantity, 1);
+    const { error } = await supabase.from("acalanto_shopping_items").insert({
+      id: crypto.randomUUID(), list_id: list.id, name: item.name,
+      quantity: qty, unit: item.unit, category: item.category, emoji: item.emoji,
+    });
+    if (error) { showToast("Erro ao adicionar à lista"); return; }
+    showToast(`🛒 "${item.name}" adicionado à lista de compras!`);
   }
 
-  function handleQtyChange(id: string, delta: number) {
-    setItems((prev) =>
-      prev.map((i) => i.id === id ? { ...i, current: Math.max(0, i.current + delta) } : i)
+  async function handleQtyChange(item: PantryItemRow, delta: number) {
+    const supabase = createClient();
+    const next = Math.max(0, item.current_quantity + delta);
+    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, current_quantity: next } : i));
+    await supabase.from("acalanto_pantry_items").update({ current_quantity: next }).eq("id", item.id);
+  }
+
+  async function handleAdd(input: { name: string; category: string; unit: string; current: number; min: number }) {
+    const supabase = createClient();
+    const emojis: Record<string, string> = { Grãos: "🌾", Laticínios: "🥛", Carnes: "🥩", Higiene: "🧴", Limpeza: "🧹", Bebidas: "🧃", Outros: "📦" };
+    const emoji = emojis[input.category] ?? "📦";
+    const id = crypto.randomUUID();
+    const row: PantryItemRow = {
+      id, family_id: familyId, name: input.name, category: input.category,
+      unit: input.unit, current_quantity: input.current, min_quantity: input.min, emoji,
+    };
+    setItems((prev) => [...prev, row]);
+    showToast(`✅ "${input.name}" adicionado à dispensa!`);
+    setShowModal(false);
+    const { error } = await supabase.from("acalanto_pantry_items").insert({
+      id, family_id: familyId, name: input.name, category: input.category,
+      unit: input.unit, current_quantity: input.current, min_quantity: input.min,
+      emoji, added_by: memberId,
+    });
+    if (error) {
+      setItems((prev) => prev.filter((i) => i.id !== id));
+      showToast("Erro ao adicionar item");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
     );
   }
 
@@ -110,6 +196,12 @@ export default function MantimentosPage() {
         ))}
       </div>
 
+      {items.length === 0 && (
+        <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)" }}>
+          Nenhum item na dispensa ainda. Adicione o primeiro acima 👆
+        </div>
+      )}
+
       {/* Em falta */}
       {low.length > 0 && (
         <div style={{ marginBottom: "2rem" }}>
@@ -128,8 +220,8 @@ export default function MantimentosPage() {
                 key={item.id}
                 item={item}
                 variant="low"
-                onQtyChange={(d) => handleQtyChange(item.id, d)}
-                onAddToList={() => handleAddToList(item.name)}
+                onQtyChange={(d) => handleQtyChange(item, d)}
+                onAddToList={() => handleAddToList(item)}
               />
             ))}
           </div>
@@ -151,8 +243,8 @@ export default function MantimentosPage() {
                 key={item.id}
                 item={item}
                 variant="ok"
-                onQtyChange={(d) => handleQtyChange(item.id, d)}
-                onAddToList={() => handleAddToList(item.name)}
+                onQtyChange={(d) => handleQtyChange(item, d)}
+                onAddToList={() => handleAddToList(item)}
               />
             ))}
           </div>
@@ -162,11 +254,7 @@ export default function MantimentosPage() {
       {showModal && (
         <AddPantryItemModal
           onClose={() => setShowModal(false)}
-          onAdd={(item) => {
-            const emojis: Record<string, string> = { Grãos: "🌾", Laticínios: "🥛", Carnes: "🥩", Higiene: "🧴", Limpeza: "🧹", Bebidas: "🧃", Outros: "📦" };
-            setItems((prev) => [...prev, { id: Date.now().toString(), emoji: emojis[item.category] ?? "📦", ...item }]);
-            showToast(`✅ "${item.name}" adicionado à dispensa!`);
-          }}
+          onAdd={handleAdd}
         />
       )}
     </div>
@@ -174,21 +262,14 @@ export default function MantimentosPage() {
 }
 
 interface PantryItemProps {
-  item: typeof mockItems[0];
+  item: PantryItemRow;
   onAddToList: () => void;
   onQtyChange: (delta: number) => void;
   variant: "low" | "ok";
 }
 
 function PantryItem({ item, onAddToList, onQtyChange, variant }: PantryItemProps) {
-  const [qty, setQty] = useState(item.current);
-  const pct = Math.min((qty / item.min) * 100, 100);
-
-  function change(delta: number) {
-    const next = Math.max(0, qty + delta);
-    setQty(next);
-    onQtyChange(delta);
-  }
+  const pct = Math.min((item.current_quantity / item.min_quantity) * 100, 100);
 
   return (
     <div
@@ -208,14 +289,14 @@ function PantryItem({ item, onAddToList, onQtyChange, variant }: PantryItemProps
             {item.name}
           </div>
           <div style={{ fontSize: "0.825rem", color: "var(--text-muted)" }}>
-            {item.category} · mínimo: {item.min} {item.unit}
+            {item.category} · mínimo: {item.min_quantity} {item.unit}
           </div>
         </div>
 
         {/* Quantidade */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
           <button
-            onClick={() => change(-1)}
+            onClick={() => onQtyChange(-1)}
             aria-label="Diminuir quantidade"
             style={{
               width: 44, height: 44, borderRadius: 12,
@@ -226,10 +307,10 @@ function PantryItem({ item, onAddToList, onQtyChange, variant }: PantryItemProps
             }}
           >−</button>
           <span style={{ minWidth: 36, textAlign: "center", fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>
-            {qty}
+            {item.current_quantity}
           </span>
           <button
-            onClick={() => change(1)}
+            onClick={() => onQtyChange(1)}
             aria-label="Aumentar quantidade"
             style={{
               width: 44, height: 44, borderRadius: 12,
@@ -252,7 +333,7 @@ function PantryItem({ item, onAddToList, onQtyChange, variant }: PantryItemProps
           }} />
         </div>
         <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          {qty} de {item.min} {item.unit} — {pct < 100 ? "abaixo do mínimo" : "estoque ok"}
+          {item.current_quantity} de {item.min_quantity} {item.unit} — {pct < 100 ? "abaixo do mínimo" : "estoque ok"}
         </div>
       </div>
 
@@ -287,7 +368,6 @@ function AddPantryItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (i
   function save() {
     if (!name.trim()) return;
     onAdd({ name: name.trim(), category, unit, current, min });
-    onClose();
   }
 
   return (

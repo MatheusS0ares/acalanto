@@ -1,44 +1,143 @@
 "use client";
-import { useState } from "react";
-import { MdAdd, MdDescription, MdPerson, MdSearch, MdUpload, MdCloudDownload, MdFolder, MdClose, MdWarning } from "react-icons/md";
+import { useEffect, useState } from "react";
+import { MdAdd, MdPerson, MdSearch, MdUpload, MdCloudDownload, MdClose, MdWarning } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
+
+const BUCKET = "acalanto-family-documents";
 
 const categories = ["Todos", "Identidade", "Habilitação", "Veículos", "Imóvel", "Saúde", "Certidões", "Outros"];
+const emojiByCategory: Record<string, string> = {
+  Identidade: "🪪", Habilitação: "🚗", Veículos: "📄", Imóvel: "🏠", Saúde: "❤️‍🩹", Certidões: "💍", Outros: "📄",
+};
 
-const mockDocs = [
-  { id: "1", name: "RG — Matheus", category: "Identidade", owner: "Matheus", expires: null, size: "2.1 MB", emoji: "🪪", date: "2024-03-10" },
-  { id: "2", name: "CNH — Matheus", category: "Habilitação", owner: "Matheus", expires: "2028-05-22", size: "1.8 MB", emoji: "🚗", date: "2023-05-22" },
-  { id: "3", name: "RG — Ana", category: "Identidade", owner: "Ana", expires: null, size: "1.5 MB", emoji: "🪪", date: "2025-01-15" },
-  { id: "4", name: "CRLV 2026", category: "Veículos", owner: "Família", expires: "2026-12-31", size: "0.9 MB", emoji: "📄", date: "2026-01-05" },
-  { id: "5", name: "Certidão de Casamento", category: "Certidões", owner: "Família", expires: null, size: "3.2 MB", emoji: "💍", date: "2020-09-12" },
-  { id: "6", name: "Escritura do Imóvel", category: "Imóvel", owner: "Família", expires: null, size: "12.4 MB", emoji: "🏠", date: "2021-04-03" },
-  { id: "7", name: "Carteirinha do Plano", category: "Saúde", owner: "Família", expires: "2026-12-31", size: "0.4 MB", emoji: "❤️‍🩹", date: "2026-01-01" },
-];
+interface DocRow {
+  id: string;
+  family_id: string;
+  name: string;
+  category: string;
+  file_url: string;
+  file_size: number | null;
+  file_name: string | null;
+  expires_at: string | null;
+}
+
+function fmtSize(bytes: number | null) {
+  if (!bytes) return "";
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 export default function DocumentosPage() {
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [docs, setDocs] = useState<DocRow[]>([]);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("Todos");
   const [uploadModal, setUploadModal] = useState(false);
+  const [toast, setToast] = useState("");
 
-  const filtered = mockDocs.filter((d) => {
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+    setFamilyId(me.family_id);
+
+    const { data: rows } = await supabase
+      .from("acalanto_documents")
+      .select("id, family_id, name, category, file_url, file_size, file_name, expires_at")
+      .eq("family_id", me.family_id)
+      .order("created_at", { ascending: false });
+    setDocs(rows ?? []);
+    setLoading(false);
+  }
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
+  }
+
+  async function uploadDoc(input: { file: File; name: string; category: string; expiresAt: string }) {
+    const supabase = createClient();
+    const path = `${familyId}/${crypto.randomUUID()}-${input.file.name}`;
+    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, input.file);
+    if (uploadError) {
+      showToast("Erro ao enviar o arquivo");
+      return;
+    }
+    const id = crypto.randomUUID();
+    const row: DocRow = {
+      id, family_id: familyId, name: input.name, category: input.category,
+      file_url: path, file_size: input.file.size, file_name: input.file.name,
+      expires_at: input.expiresAt || null,
+    };
+    const { error } = await supabase.from("acalanto_documents").insert({
+      id, family_id: familyId, name: input.name, category: input.category,
+      file_url: path, file_size: input.file.size, file_name: input.file.name,
+      expires_at: input.expiresAt || null,
+    });
+    if (error) {
+      showToast("Erro ao salvar o documento");
+      return;
+    }
+    setDocs((prev) => [row, ...prev]);
+    showToast(`✅ "${input.name}" enviado!`);
+    setUploadModal(false);
+  }
+
+  async function downloadDoc(doc: DocRow) {
+    const supabase = createClient();
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(doc.file_url, 3600);
+    if (error || !data) {
+      showToast("Erro ao gerar link do arquivo");
+      return;
+    }
+    window.open(data.signedUrl, "_blank");
+  }
+
+  const filtered = docs.filter((d) => {
     const matchSearch = d.name.toLowerCase().includes(search.toLowerCase()) || d.category.toLowerCase().includes(search.toLowerCase());
     const matchCat = categoryFilter === "Todos" || d.category === categoryFilter;
     return matchSearch && matchCat;
   });
 
-  const expiringSoon = mockDocs.filter((d) => {
-    if (!d.expires) return false;
-    const days = (new Date(d.expires).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  const expiringSoon = docs.filter((d) => {
+    if (!d.expires_at) return false;
+    const days = (new Date(d.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
     return days > 0 && days <= 90;
   });
 
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
+      {toast && (
+        <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "#2a5a3a", color: "#fff", padding: "0.875rem 1.5rem", borderRadius: 14, zIndex: 999, fontWeight: 700, fontSize: "1rem", boxShadow: "0 4px 20px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}>
+          {toast}
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ marginBottom: "1.5rem" }}>
         <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.35rem" }}>
           📄 Documentos da Família
         </h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>{mockDocs.length} documentos guardados com segurança.</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>{docs.length} documentos guardados com segurança.</p>
       </div>
       <button onClick={() => setUploadModal(true)} style={{ width: "100%", padding: "1rem 1.25rem", borderRadius: 16, border: "none", cursor: "pointer", background: "#6a9fd4", color: "#fff", fontSize: "1.05rem", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.625rem", boxShadow: "0 4px 16px rgba(106,159,212,0.35)", marginBottom: "1.5rem" }}>
         <MdUpload size={24} /> Enviar novo documento
@@ -54,7 +153,7 @@ export default function DocumentosPage() {
             </div>
             {expiringSoon.map((d) => (
               <div key={d.id} style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                {d.emoji} {d.name} — vence {new Date(d.expires! + "T12:00:00").toLocaleDateString("pt-BR")}
+                {emojiByCategory[d.category] ?? "📄"} {d.name} — vence {new Date(d.expires_at! + "T12:00:00").toLocaleDateString("pt-BR")}
               </div>
             ))}
           </div>
@@ -80,8 +179,8 @@ export default function DocumentosPage() {
       {/* Grid de documentos */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.875rem" }}>
         {filtered.map((doc) => {
-          const daysToExpiry = doc.expires
-            ? (new Date(doc.expires).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+          const daysToExpiry = doc.expires_at
+            ? (new Date(doc.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
             : null;
           const expiring = daysToExpiry !== null && daysToExpiry > 0 && daysToExpiry <= 90;
 
@@ -91,18 +190,17 @@ export default function DocumentosPage() {
               className="card"
               style={{
                 padding: "1.25rem",
-                cursor: "pointer",
                 borderColor: expiring ? "rgba(251,191,36,0.3)" : undefined,
               }}
             >
-              <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem", textAlign: "center" }}>{doc.emoji}</div>
+              <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem", textAlign: "center" }}>{emojiByCategory[doc.category] ?? "📄"}</div>
               <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.3rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
               <div style={{ display: "flex", alignItems: "center", gap: "0.25rem", marginBottom: "0.5rem" }}>
                 <span style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: "9999px", background: "rgba(59,130,246,0.1)", color: "#60a5fa" }}>{doc.category}</span>
               </div>
               <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: "0.2rem" }}><MdPerson size={11} /> {doc.owner}</span>
-                <span>{doc.size}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: "0.2rem" }}><MdPerson size={11} /> Família</span>
+                <span>{fmtSize(doc.file_size)}</span>
               </div>
               {expiring && (
                 <div style={{ marginTop: "0.5rem", fontSize: "0.7rem", color: "#fbbf24", fontWeight: 600 }}>
@@ -110,6 +208,7 @@ export default function DocumentosPage() {
                 </div>
               )}
               <button
+                onClick={() => downloadDoc(doc)}
                 style={{
                   marginTop: "0.75rem", width: "100%",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: "0.375rem",
@@ -139,23 +238,40 @@ export default function DocumentosPage() {
             cursor: "pointer",
             minHeight: 160,
             color: "var(--text-muted)",
-            transition: "border-color 0.15s, color 0.15s",
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#3b82f6"; (e.currentTarget as HTMLElement).style.color = "#60a5fa"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
         >
           <MdAdd size={28} />
           <span style={{ fontSize: "0.82rem", fontWeight: 500 }}>Enviar documento</span>
         </div>
       </div>
 
-      {uploadModal && <UploadModal onClose={() => setUploadModal(false)} />}
+      {uploadModal && <UploadModal onClose={() => setUploadModal(false)} onUpload={uploadDoc} />}
     </div>
   );
 }
 
-function UploadModal({ onClose }: { onClose: () => void }) {
+function UploadModal({ onClose, onUpload }: {
+  onClose: () => void;
+  onUpload: (input: { file: File; name: string; category: string; expiresAt: string }) => void;
+}) {
   const [dragging, setDragging] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState(categories[1]);
+  const [expiresAt, setExpiresAt] = useState("");
+  const [sending, setSending] = useState(false);
+
+  function pickFile(f: File) {
+    setFile(f);
+    if (!name) setName(f.name.replace(/\.[^.]+$/, ""));
+  }
+
+  async function save() {
+    if (!file || !name.trim()) return;
+    setSending(true);
+    await onUpload({ file, name: name.trim(), category, expiresAt });
+    setSending(false);
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}
@@ -168,10 +284,10 @@ function UploadModal({ onClose }: { onClose: () => void }) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {/* Área de drag&drop */}
-          <div
+          <label
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={(e) => { e.preventDefault(); setDragging(false); }}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) pickFile(f); }}
             style={{
               border: `2px dashed ${dragging ? "#3b82f6" : "var(--border)"}`,
               borderRadius: "0.875rem",
@@ -179,31 +295,34 @@ function UploadModal({ onClose }: { onClose: () => void }) {
               textAlign: "center",
               cursor: "pointer",
               background: dragging ? "rgba(59,130,246,0.05)" : "transparent",
-              transition: "all 0.2s",
+              display: "block",
             }}
           >
+            <input type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <MdUpload size={32} color={dragging ? "#60a5fa" : "var(--text-muted)"} style={{ marginBottom: "0.75rem" }} />
-            <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
-              Arraste o arquivo aqui ou{" "}
-              <span style={{ color: "#60a5fa", cursor: "pointer" }}>clique para selecionar</span>
-            </p>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>PDF, JPG, PNG — até 20MB</p>
-          </div>
-          <input type="text" placeholder="Nome do documento" className="input-field" />
+            {file ? (
+              <p style={{ fontSize: "0.875rem", color: "var(--text-primary)", fontWeight: 600 }}>{file.name}</p>
+            ) : (
+              <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
+                Arraste o arquivo aqui ou <span style={{ color: "#60a5fa" }}>clique para selecionar</span>
+              </p>
+            )}
+          </label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do documento" className="input-field" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
             <div>
               <label style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.35rem" }}>Categoria</label>
-              <select className="input-field" style={{ cursor: "pointer" }}>
+              <select value={category} onChange={(e) => setCategory(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
                 {categories.slice(1).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
               <label style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.35rem" }}>Vencimento (opcional)</label>
-              <input type="date" className="input-field" />
+              <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="input-field" />
             </div>
           </div>
-          <button onClick={onClose} className="btn-primary" style={{ width: "100%", justifyContent: "center", background: "#3b82f6" }}>
-            <MdUpload size={18} /> Enviar
+          <button onClick={save} disabled={!file || !name.trim() || sending} className="btn-primary" style={{ width: "100%", justifyContent: "center", background: "#3b82f6", opacity: (!file || !name.trim() || sending) ? 0.6 : 1 }}>
+            <MdUpload size={18} /> {sending ? "Enviando..." : "Enviar"}
           </button>
         </div>
       </div>

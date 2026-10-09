@@ -1,28 +1,76 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MdAdd, MdChevronLeft, MdChevronRight, MdClose } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
+import type { FamilyMember } from "@/types";
 
 const DAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
-const defaultEvents = [
-  { date: "2026-06-27", title: "Consulta cardiologista", color: "#d06a6a", member: "Matheus", emoji: "❤️" },
-  { date: "2026-06-30", title: "Pagar aluguel", color: "var(--brand)", member: "Família", emoji: "🏠" },
-  { date: "2026-07-05", title: "Aniversário da Ana 🎂", color: "#c07898", member: "Família", emoji: "🎂" },
-  { date: "2026-07-10", title: "Dentista", color: "#6a9fd4", member: "Ana", emoji: "🦷" },
-  { date: "2026-07-15", title: "Reunião escola", color: "#c99a40", member: "Família", emoji: "🏫" },
-];
+interface EventRow {
+  id: string;
+  family_id: string;
+  title: string;
+  start_date: string;
+  color: string;
+  created_by: string | null;
+}
 
 export default function CalendarioPage() {
   const today = new Date();
-  const [events, setEvents] = useState(defaultEvents);
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [events, setEvents] = useState<EventRow[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [addModal, setAddModal] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newMember, setNewMember] = useState("Família");
+  const [newMemberId, setNewMemberId] = useState("");
   const [newDate, setNewDate] = useState("");
   const [toast, setToast] = useState("");
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("id, family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+
+    setFamilyId(me.family_id);
+    setMemberId(me.id);
+
+    const { data: memberRows } = await supabase
+      .from("acalanto_family_members")
+      .select("*")
+      .eq("family_id", me.family_id);
+    setMembers(memberRows ?? []);
+
+    const { data: eventRows } = await supabase
+      .from("acalanto_calendar_events")
+      .select("id, family_id, title, start_date, color, created_by")
+      .eq("family_id", me.family_id)
+      .order("start_date");
+    setEvents(eventRows ?? []);
+    setLoading(false);
+  }
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
+  }
+
+  const memberMap = new Map(members.map((m) => [m.id, m]));
+  const memberName = (id: string | null) => (id && memberMap.get(id)?.name) || "Família";
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -32,12 +80,12 @@ export default function CalendarioPage() {
 
   function getEventsForDay(day: number) {
     const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    return events.filter((e) => e.date === dateStr);
+    return events.filter((e) => e.start_date === dateStr);
   }
 
   const upcomingEvents = events
-    .filter((e) => new Date(e.date + "T12:00:00") >= new Date(today.getFullYear(), today.getMonth(), today.getDate()))
-    .sort((a, b) => a.date.localeCompare(b.date))
+    .filter((e) => new Date(e.start_date + "T12:00:00") >= new Date(today.getFullYear(), today.getMonth(), today.getDate()))
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
     .slice(0, 5);
 
   const selectedDateStr = selectedDay
@@ -45,9 +93,35 @@ export default function CalendarioPage() {
     : null;
   const selectedEvents = selectedDay ? getEventsForDay(selectedDay) : [];
 
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2500);
+  async function addEvent() {
+    const date = newDate || selectedDateStr;
+    if (!newTitle.trim() || !date) return;
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: EventRow = {
+      id, family_id: familyId, title: newTitle.trim(), start_date: date,
+      color: "var(--brand)", created_by: newMemberId || null,
+    };
+    setEvents((prev) => [...prev, row]);
+    showToast("✅ Evento adicionado!");
+    setNewTitle(""); setNewDate(""); setNewMemberId("");
+    setAddModal(false);
+    const { error } = await supabase.from("acalanto_calendar_events").insert({
+      id, family_id: familyId, title: newTitle.trim(), start_date: date,
+      created_by: newMemberId || memberId,
+    });
+    if (error) {
+      setEvents((prev) => prev.filter((e) => e.id !== id));
+      showToast("Erro ao adicionar evento");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
   }
 
   return (
@@ -129,8 +203,8 @@ export default function CalendarioPage() {
                   {day}
                 </span>
                 <div style={{ display: "flex", flexDirection: "column", gap: "2px", width: "100%" }}>
-                  {dayEvents.slice(0, 2).map((ev, j) => (
-                    <div key={j} style={{ height: 5, borderRadius: 3, background: ev.color, width: "80%", margin: "0 auto" }} />
+                  {dayEvents.slice(0, 2).map((ev) => (
+                    <div key={ev.id} style={{ height: 5, borderRadius: 3, background: ev.color, width: "80%", margin: "0 auto" }} />
                   ))}
                 </div>
               </button>
@@ -156,11 +230,11 @@ export default function CalendarioPage() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {selectedEvents.map((ev) => (
-                <div key={ev.date + ev.title} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", gap: "1rem", minHeight: 72, borderLeft: `4px solid ${ev.color}` }}>
-                  <span style={{ fontSize: "1.75rem" }}>{ev.emoji}</span>
+                <div key={ev.id} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", gap: "1rem", minHeight: 72, borderLeft: `4px solid ${ev.color}` }}>
+                  <span style={{ fontSize: "1.75rem" }}>📅</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.25rem" }}>{ev.title}</div>
-                    <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>👤 {ev.member}</div>
+                    <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>👤 {memberName(ev.created_by)}</div>
                   </div>
                 </div>
               ))}
@@ -174,19 +248,24 @@ export default function CalendarioPage() {
         <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.875rem" }}>
           🔜 Próximos eventos
         </h3>
+        {upcomingEvents.length === 0 && (
+          <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)" }}>
+            Nenhum evento futuro ainda.
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {upcomingEvents.map((ev) => {
-            const daysAway = Math.ceil((new Date(ev.date + "T12:00:00").getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+            const daysAway = Math.ceil((new Date(ev.start_date + "T12:00:00").getTime() - Date.now()) / (1000 * 60 * 60 * 24));
             return (
-              <div key={ev.date + ev.title} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", gap: "1rem", minHeight: 68, borderLeft: `4px solid ${ev.color}` }}>
-                <span style={{ fontSize: "1.5rem" }}>{ev.emoji}</span>
+              <div key={ev.id} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", gap: "1rem", minHeight: 68, borderLeft: `4px solid ${ev.color}` }}>
+                <span style={{ fontSize: "1.5rem" }}>📅</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>{ev.title}</div>
-                  <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>👤 {ev.member}</div>
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>👤 {memberName(ev.created_by)}</div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text-primary)" }}>
-                    {new Date(ev.date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}
+                    {new Date(ev.start_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}
                   </div>
                   <div style={{ fontSize: "0.78rem", color: daysAway <= 3 ? "#d06a6a" : "var(--text-muted)" }}>
                     {daysAway <= 0 ? "Hoje!" : `Em ${daysAway} dias`}
@@ -228,10 +307,9 @@ export default function CalendarioPage() {
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Quem?</label>
-                  <select value={newMember} onChange={(e) => setNewMember(e.target.value)} className="input-field" style={{ cursor: "pointer", fontSize: "0.95rem" }}>
-                    <option>Família</option>
-                    <option>Ana</option>
-                    <option>Matheus</option>
+                  <select value={newMemberId} onChange={(e) => setNewMemberId(e.target.value)} className="input-field" style={{ cursor: "pointer", fontSize: "0.95rem" }}>
+                    <option value="">Família</option>
+                    {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                 </div>
               </div>
@@ -239,13 +317,7 @@ export default function CalendarioPage() {
                 <button onClick={() => setAddModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem", fontSize: "0.95rem" }}>Cancelar</button>
                 <button
                   disabled={!newTitle.trim() || (!newDate && !selectedDateStr)}
-                  onClick={() => {
-                    const date = newDate || selectedDateStr!;
-                    setEvents((prev) => [...prev, { date, title: newTitle.trim(), color: "var(--brand)", member: newMember, emoji: "📅" }]);
-                    showToast("✅ Evento adicionado!");
-                    setNewTitle(""); setNewDate(""); setNewMember("Família");
-                    setAddModal(false);
-                  }}
+                  onClick={addEvent}
                   className="btn-primary"
                   style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontSize: "1rem", fontWeight: 800, opacity: (newTitle.trim() && (newDate || selectedDateStr)) ? 1 : 0.6 }}
                 >

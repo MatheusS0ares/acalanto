@@ -1,42 +1,154 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MdAdd, MdClose, MdCalendarToday, MdLocationOn } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
 
-interface Memory {
-  id: string; title: string; date: string; location?: string;
-  tags: string[]; description?: string; color: string; emoji: string;
+const BUCKET = "acalanto-memory-photos";
+
+interface MemoryRow {
+  id: string;
+  family_id: string;
+  title: string;
+  date: string;
+  location: string | null;
+  description: string | null;
+  color: string;
+  emoji: string;
+  tags: string[];
 }
 
-const mockMemories: Memory[] = [
-  { id: "1", title: "Natal 2025", date: "2025-12-25", location: "Casa da vovó", tags: ["Família", "Natal"], description: "Um Natal inesquecível reunindo todos!", color: "#d06a6a", emoji: "🎄" },
-  { id: "2", title: "Aniversário de Casamento", date: "2025-09-12", location: "Restaurante Vila Italiana", tags: ["Casal", "Especial"], description: "5 anos juntos ❤️", color: "#c07898", emoji: "💍" },
-  { id: "3", title: "Viagem a Gramado", date: "2025-07-10", location: "Gramado, RS", tags: ["Viagem", "Férias"], description: "Primeira viagem dos dois juntos para o sul", color: "#6a9fd4", emoji: "🏔️" },
-  { id: "4", title: "Mudança para o novo apê", date: "2025-04-01", location: "Rua das Flores", tags: ["Casa", "Marco"], description: "Começo de um novo capítulo!", color: "var(--brand)", emoji: "🏠" },
-  { id: "5", title: "Formatura da Ana", date: "2024-12-10", location: "Universidade", tags: ["Conquista", "Estudo"], color: "#c99a40", emoji: "🎓" },
-  { id: "6", title: "Primeiro dia de Pedro", date: "2025-08-05", location: "Casa", tags: ["Pet", "Amor"], description: "Pedro chegou e roubou nossos corações 🐶", color: "#88aa40", emoji: "🐾" },
-];
+interface PhotoRow {
+  id: string;
+  memory_id: string;
+  file_url: string;
+}
 
-const allTags = ["Todos", ...new Set(mockMemories.flatMap((m) => m.tags))];
+const defaultColors = ["#d06a6a", "#c07898", "#6a9fd4", "var(--brand)", "#c99a40", "#88aa40"];
 
 export default function MemoriasPage() {
-  const [memories, setMemories] = useState<Memory[]>(mockMemories);
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const [memories, setMemories] = useState<MemoryRow[]>([]);
+  const [photos, setPhotos] = useState<PhotoRow[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Map<string, string>>(new Map());
   const [tagFilter, setTagFilter] = useState("Todos");
-  const [selected, setSelected] = useState<Memory | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addModal, setAddModal] = useState(false);
-  const [newMemory, setNewMemory] = useState({ title: "", date: "", location: "", description: "", emoji: "📸", color: "#7aab8a" });
   const [toast, setToast] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("id, family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+    setFamilyId(me.family_id);
+    setMemberId(me.id);
+
+    const { data: memoryRows } = await supabase
+      .from("acalanto_memories")
+      .select("id, family_id, title, date, location, description, color, emoji, tags")
+      .eq("family_id", me.family_id)
+      .order("date", { ascending: false });
+    const ms = memoryRows ?? [];
+    setMemories(ms);
+
+    if (ms.length > 0) {
+      const { data: photoRows } = await supabase
+        .from("acalanto_memory_photos")
+        .select("id, memory_id, file_url")
+        .in("memory_id", ms.map((m) => m.id));
+      setPhotos(photoRows ?? []);
+    }
+    setLoading(false);
+  }
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }
 
+  const allTags = ["Todos", ...new Set(memories.flatMap((m) => m.tags))];
   const filtered = memories.filter((m) => tagFilter === "Todos" || m.tags.includes(tagFilter));
-  const sortedByYear = filtered.reduce<Record<string, Memory[]>>((acc, m) => {
+  const sortedByYear = filtered.reduce<Record<string, MemoryRow[]>>((acc, m) => {
     const year = new Date(m.date + "T12:00:00").getFullYear().toString();
     (acc[year] ??= []).push(m);
     return acc;
   }, {});
+
+  const selected = memories.find((m) => m.id === selectedId) ?? null;
+  const selectedPhotos = photos.filter((p) => p.memory_id === selectedId);
+
+  async function ensurePhotoUrl(photo: PhotoRow) {
+    if (photoUrls.has(photo.id)) return;
+    const supabase = createClient();
+    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(photo.file_url, 3600);
+    if (data) setPhotoUrls((prev) => new Map(prev).set(photo.id, data.signedUrl));
+  }
+
+  useEffect(() => {
+    selectedPhotos.forEach((p) => { ensurePhotoUrl(p); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, photos.length]);
+
+  async function addMemory(input: { title: string; date: string; location: string; description: string }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const color = defaultColors[memories.length % defaultColors.length];
+    const row: MemoryRow = {
+      id, family_id: familyId, title: input.title, date: input.date,
+      location: input.location || null, description: input.description || null,
+      color, emoji: "📸", tags: [],
+    };
+    setMemories((prev) => [row, ...prev]);
+    showToast("📸 Memória salva!");
+    setAddModal(false);
+    const { error } = await supabase.from("acalanto_memories").insert({
+      id, family_id: familyId, title: input.title, date: input.date,
+      location: input.location || null, description: input.description || null,
+      color, emoji: "📸", created_by: memberId,
+    });
+    if (error) {
+      setMemories((prev) => prev.filter((m) => m.id !== id));
+      showToast("Erro ao salvar memória");
+    }
+  }
+
+  async function uploadPhotos(memoryId: string, files: FileList) {
+    setUploading(true);
+    const supabase = createClient();
+    const newPhotos: PhotoRow[] = [];
+    for (const file of Array.from(files)) {
+      const path = `${familyId}/${memoryId}/${crypto.randomUUID()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file);
+      if (uploadError) continue;
+      const id = crypto.randomUUID();
+      const { error } = await supabase.from("acalanto_memory_photos").insert({ id, memory_id: memoryId, file_url: path });
+      if (!error) newPhotos.push({ id, memory_id: memoryId, file_url: path });
+    }
+    setUploading(false);
+    if (newPhotos.length === 0) { showToast("Erro ao enviar as fotos"); return; }
+    setPhotos((prev) => [...prev, ...newPhotos]);
+    showToast(`📷 ${newPhotos.length} foto(s) adicionada(s)!`);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
@@ -65,14 +177,16 @@ export default function MemoriasPage() {
       </button>
 
       {/* Filtro de tags */}
-      <div style={{ display: "flex", gap: "0.5rem", overflowX: "auto", paddingBottom: "0.5rem", marginBottom: "1.75rem" }}>
-        {allTags.map((tag) => (
-          <button key={tag} onClick={() => setTagFilter(tag)}
-            style={{ padding: "0.5rem 1rem", borderRadius: "9999px", minHeight: 40, border: `1.5px solid ${tagFilter === tag ? "#c07898" : "var(--border)"}`, background: tagFilter === tag ? "rgba(192,120,152,0.12)" : "transparent", color: tagFilter === tag ? "#c07898" : "var(--text-muted)", fontSize: "0.875rem", cursor: "pointer", whiteSpace: "nowrap", fontWeight: tagFilter === tag ? 700 : 500 }}>
-            {tag}
-          </button>
-        ))}
-      </div>
+      {allTags.length > 1 && (
+        <div style={{ display: "flex", gap: "0.5rem", overflowX: "auto", paddingBottom: "0.5rem", marginBottom: "1.75rem" }}>
+          {allTags.map((tag) => (
+            <button key={tag} onClick={() => setTagFilter(tag)}
+              style={{ padding: "0.5rem 1rem", borderRadius: "9999px", minHeight: 40, border: `1.5px solid ${tagFilter === tag ? "#c07898" : "var(--border)"}`, background: tagFilter === tag ? "rgba(192,120,152,0.12)" : "transparent", color: tagFilter === tag ? "#c07898" : "var(--text-muted)", fontSize: "0.875rem", cursor: "pointer", whiteSpace: "nowrap", fontWeight: tagFilter === tag ? 700 : 500 }}>
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Timeline */}
       {Object.entries(sortedByYear).sort(([a], [b]) => Number(b) - Number(a)).map(([year, items]) => (
@@ -84,10 +198,8 @@ export default function MemoriasPage() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "1rem" }}>
             {items.sort((a, b) => b.date.localeCompare(a.date)).map((m) => (
-              <div key={m.id} onClick={() => setSelected(m)}
-                style={{ borderRadius: 16, overflow: "hidden", cursor: "pointer", border: "1px solid var(--border-light)", transition: "transform 0.15s, box-shadow 0.15s" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-3px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 8px 24px ${m.color}30`; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
+              <div key={m.id} onClick={() => setSelectedId(m.id)}
+                style={{ borderRadius: 16, overflow: "hidden", cursor: "pointer", border: "1px solid var(--border-light)" }}>
                 <div style={{ height: 140, background: `linear-gradient(135deg, ${m.color}35, ${m.color}12)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "3.5rem" }}>
                   {m.emoji}
                 </div>
@@ -128,11 +240,11 @@ export default function MemoriasPage() {
       {/* Modal de detalhes */}
       {selected && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: "1rem" }}
-          onClick={(e) => e.target === e.currentTarget && setSelected(null)}>
-          <div style={{ background: "var(--bg-card)", borderRadius: 20, width: "100%", maxWidth: 480, overflow: "hidden" }}>
+          onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}>
+          <div style={{ background: "var(--bg-card)", borderRadius: 20, width: "100%", maxWidth: 480, overflow: "hidden", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ height: 180, background: `linear-gradient(135deg, ${selected.color}50, ${selected.color}20)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "5rem", position: "relative" }}>
               {selected.emoji}
-              <button onClick={() => setSelected(null)} style={{ position: "absolute", top: "1rem", right: "1rem", background: "rgba(0,0,0,0.35)", border: "none", cursor: "pointer", color: "white", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <button onClick={() => setSelectedId(null)} style={{ position: "absolute", top: "1rem", right: "1rem", background: "rgba(0,0,0,0.35)", border: "none", cursor: "pointer", color: "white", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <MdClose size={20} />
               </button>
             </div>
@@ -150,69 +262,87 @@ export default function MemoriasPage() {
                 )}
               </div>
               {selected.description && <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: "1.25rem" }}>{selected.description}</p>}
-              <div style={{ display: "flex", gap: "0.4rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
-                {selected.tags.map((tag) => (
-                  <span key={tag} style={{ fontSize: "0.8rem", padding: "0.2rem 0.625rem", borderRadius: "9999px", background: `${selected.color}20`, color: selected.color, fontWeight: 700 }}>{tag}</span>
-                ))}
-              </div>
-              <button onClick={() => { showToast("📷 Foto adicionada!"); setSelected(null); }} className="btn-primary" style={{ width: "100%", justifyContent: "center", fontSize: "0.95rem", padding: "0.875rem", background: selected.color }}>
-                <MdAdd size={18} /> Adicionar fotos
-              </button>
+
+              {selectedPhotos.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem", marginBottom: "1.25rem" }}>
+                  {selectedPhotos.map((p) => (
+                    <div key={p.id} style={{ aspectRatio: "1", borderRadius: 10, overflow: "hidden", background: "var(--bg-secondary)" }}>
+                      {photoUrls.get(p.id) && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={photoUrls.get(p.id)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <label className="btn-primary" style={{ width: "100%", justifyContent: "center", fontSize: "0.95rem", padding: "0.875rem", background: selected.color, cursor: "pointer", opacity: uploading ? 0.7 : 1 }}>
+                <input type="file" accept="image/*" multiple style={{ display: "none" }}
+                  disabled={uploading}
+                  onChange={(e) => { if (e.target.files?.length) uploadPhotos(selected.id, e.target.files); }} />
+                <MdAdd size={18} /> {uploading ? "Enviando..." : "Adicionar fotos"}
+              </label>
             </div>
           </div>
         </div>
       )}
 
       {/* Modal nova memória */}
-      {addModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}
-          onClick={(e) => e.target === e.currentTarget && setAddModal(false)}>
-          <div style={{ background: "var(--bg-card)", borderRadius: "1.25rem 1.25rem 0 0", width: "100%", maxWidth: 540, padding: "1.5rem" }}>
-            <div style={{ width: 44, height: 5, borderRadius: 3, background: "var(--border)", margin: "0 auto 1.5rem" }} />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-              <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--text-primary)" }}>Nova Memória</h2>
-              <button onClick={() => setAddModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.5rem" }}><MdClose size={22} /></button>
+      {addModal && <AddMemoryModal onClose={() => setAddModal(false)} onAdd={addMemory} />}
+    </div>
+  );
+}
+
+function AddMemoryModal({ onClose, onAdd }: {
+  onClose: () => void;
+  onAdd: (input: { title: string; date: string; location: string; description: string }) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+
+  function save() {
+    if (!title || !date) return;
+    onAdd({ title, date, location, description });
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: "var(--bg-card)", borderRadius: "1.25rem 1.25rem 0 0", width: "100%", maxWidth: 540, padding: "1.5rem" }}>
+        <div style={{ width: 44, height: 5, borderRadius: 3, background: "var(--border)", margin: "0 auto 1.5rem" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+          <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--text-primary)" }}>Nova Memória</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.5rem" }}><MdClose size={22} /></button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Qual foi o momento? *</label>
+            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Natal, Aniversário, Viagem..." className="input-field" style={{ fontSize: "1rem" }} autoFocus />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Data *</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input-field" style={{ fontSize: "0.95rem" }} />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Qual foi o momento? *</label>
-                <input type="text" value={newMemory.title} onChange={(e) => setNewMemory((p) => ({ ...p, title: e.target.value }))} placeholder="Ex: Natal, Aniversário, Viagem..." className="input-field" style={{ fontSize: "1rem" }} autoFocus />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Data *</label>
-                  <input type="date" value={newMemory.date} onChange={(e) => setNewMemory((p) => ({ ...p, date: e.target.value }))} className="input-field" style={{ fontSize: "0.95rem" }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Local (opcional)</label>
-                  <input type="text" value={newMemory.location} onChange={(e) => setNewMemory((p) => ({ ...p, location: e.target.value }))} placeholder="Onde foi?" className="input-field" style={{ fontSize: "0.95rem" }} />
-                </div>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Descrição (opcional)</label>
-                <textarea value={newMemory.description} onChange={(e) => setNewMemory((p) => ({ ...p, description: e.target.value }))} placeholder="Conta um pouco sobre esse momento..." rows={3} className="input-field" style={{ resize: "none", fontSize: "0.95rem" }} />
-              </div>
-              <div style={{ display: "flex", gap: "0.75rem" }}>
-                <button onClick={() => setAddModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem", fontSize: "0.95rem" }}>Cancelar</button>
-                <button
-                  onClick={() => {
-                    if (!newMemory.title || !newMemory.date) return;
-                    setMemories((prev) => [...prev, { ...newMemory, id: Date.now().toString(), tags: [] }]);
-                    showToast("📸 Memória salva!");
-                    setAddModal(false);
-                    setNewMemory({ title: "", date: "", location: "", description: "", emoji: "📸", color: "#7aab8a" });
-                  }}
-                  disabled={!newMemory.title || !newMemory.date}
-                  className="btn-primary"
-                  style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontSize: "1rem", fontWeight: 800 }}
-                >
-                  <MdAdd size={20} /> Salvar memória
-                </button>
-              </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Local (opcional)</label>
+              <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Onde foi?" className="input-field" style={{ fontSize: "0.95rem" }} />
             </div>
           </div>
+          <div>
+            <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Descrição (opcional)</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Conta um pouco sobre esse momento..." rows={3} className="input-field" style={{ resize: "none", fontSize: "0.95rem" }} />
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            <button onClick={onClose} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem", fontSize: "0.95rem" }}>Cancelar</button>
+            <button onClick={save} disabled={!title || !date} className="btn-primary" style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontSize: "1rem", fontWeight: 800 }}>
+              <MdAdd size={20} /> Salvar memória
+            </button>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

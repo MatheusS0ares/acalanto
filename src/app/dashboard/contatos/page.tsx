@@ -1,22 +1,31 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MdAdd, MdPhone, MdClose } from "react-icons/md";
+import { createClient } from "@/lib/supabase/client";
 
-const contacts = [
-  { id: "1", name: "Dr. Carlos Lima", relation: "Cardiologista do Matheus", phone: "(11) 99999-1111", category: "Saúde", priority: 1, emoji: "👨‍⚕️" },
-  { id: "2", name: "UPA Centro", relation: "Pronto-socorro mais próximo", phone: "(11) 3333-2222", category: "Emergência", priority: 1, emoji: "🏥" },
-  { id: "3", name: "Bombeiros", relation: "Incêndio e resgate", phone: "193", category: "Emergência", priority: 0, emoji: "🚒" },
-  { id: "4", name: "SAMU", relation: "Emergência médica", phone: "192", category: "Emergência", priority: 0, emoji: "🚑" },
-  { id: "5", name: "Polícia Militar", relation: "Segurança e emergência", phone: "190", category: "Emergência", priority: 0, emoji: "🚔" },
-  { id: "6", name: "João — Vizinho", relation: "Vizinho do 302", phone: "(11) 99888-7777", category: "Vizinhos", priority: 2, emoji: "🤝" },
-  { id: "7", name: "Condomínio", relation: "Portaria", phone: "(11) 3333-9999", category: "Serviços", priority: 2, emoji: "🏢" },
-  { id: "8", name: "Eletricista", relation: "João Elétrica", phone: "(11) 99777-6666", category: "Serviços", priority: 3, emoji: "⚡" },
-];
+interface ContactRow {
+  id: string;
+  family_id: string;
+  name: string;
+  relation: string | null;
+  phone: string;
+  category: string;
+  priority: number;
+  emoji: string;
+}
 
 const categories = ["Todos", "Emergência", "Saúde", "Vizinhos", "Serviços"];
 
+const universalDefaults = [
+  { name: "Bombeiros", relation: "Incêndio e resgate", phone: "193", category: "Emergência", priority: 0, emoji: "🚒" },
+  { name: "SAMU", relation: "Emergência médica", phone: "192", category: "Emergência", priority: 0, emoji: "🚑" },
+  { name: "Polícia Militar", relation: "Segurança e emergência", phone: "190", category: "Emergência", priority: 0, emoji: "🚔" },
+];
+
 export default function ContatosPage() {
-  const [allContacts, setAllContacts] = useState(contacts);
+  const [loading, setLoading] = useState(true);
+  const [familyId, setFamilyId] = useState("");
+  const [allContacts, setAllContacts] = useState<ContactRow[]>([]);
   const [filter, setFilter] = useState("Todos");
   const [addModal, setAddModal] = useState(false);
   const [newName, setNewName] = useState("");
@@ -25,14 +34,73 @@ export default function ContatosPage() {
   const [newCategory, setNewCategory] = useState("Serviços");
   const [toast, setToast] = useState("");
 
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: me } = await supabase
+      .from("acalanto_family_members")
+      .select("family_id")
+      .eq("user_id", user.id)
+      .single();
+    if (!me) { setLoading(false); return; }
+    setFamilyId(me.family_id);
+
+    let { data: rows } = await supabase
+      .from("acalanto_emergency_contacts")
+      .select("id, family_id, name, relation, phone, category, priority, emoji")
+      .eq("family_id", me.family_id);
+
+    if (!rows || rows.length === 0) {
+      const seedRows = universalDefaults.map((c) => ({ id: crypto.randomUUID(), family_id: me.family_id, ...c }));
+      const { error } = await supabase.from("acalanto_emergency_contacts").insert(seedRows);
+      if (!error) rows = seedRows;
+    }
+
+    setAllContacts(rows ?? []);
+    setLoading(false);
+  }
+
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }
 
+  async function addContact() {
+    if (!newName.trim() || !newPhone.trim()) return;
+    const supabase = createClient();
+    const emojisMap: Record<string, string> = { Emergência: "🚨", Saúde: "❤️", Vizinhos: "🤝", Serviços: "🔧" };
+    const id = crypto.randomUUID();
+    const row: ContactRow = {
+      id, family_id: familyId, name: newName.trim(), relation: newRelation.trim() || newCategory,
+      phone: newPhone.trim(), category: newCategory, priority: 3, emoji: emojisMap[newCategory] ?? "📞",
+    };
+    setAllContacts((prev) => [...prev, row]);
+    showToast(`✅ "${newName.trim()}" adicionado!`);
+    setNewName(""); setNewRelation(""); setNewPhone(""); setNewCategory("Serviços");
+    setAddModal(false);
+    const { error } = await supabase.from("acalanto_emergency_contacts").insert(row);
+    if (error) {
+      setAllContacts((prev) => prev.filter((c) => c.id !== id));
+      showToast("Erro ao adicionar contato");
+    }
+  }
+
   const filtered = allContacts.filter((c) => filter === "Todos" || c.category === filter);
   const urgent = filtered.filter((c) => c.priority <= 1);
   const others = filtered.filter((c) => c.priority > 1);
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>
+        Carregando...
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -157,16 +225,7 @@ export default function ContatosPage() {
                 <button onClick={() => setAddModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem", fontSize: "0.95rem" }}>Cancelar</button>
                 <button
                   disabled={!newName.trim() || !newPhone.trim()}
-                  onClick={() => {
-                    const emojisMap: Record<string, string> = { Emergência: "🚨", Saúde: "❤️", Vizinhos: "🤝", Serviços: "🔧" };
-                    setAllContacts((prev) => [...prev, {
-                      id: Date.now().toString(), name: newName.trim(), relation: newRelation.trim() || newCategory,
-                      phone: newPhone.trim(), category: newCategory, priority: 3, emoji: emojisMap[newCategory] ?? "📞",
-                    }]);
-                    showToast(`✅ "${newName.trim()}" adicionado!`);
-                    setNewName(""); setNewRelation(""); setNewPhone(""); setNewCategory("Serviços");
-                    setAddModal(false);
-                  }}
+                  onClick={addContact}
                   className="btn-primary"
                   style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontSize: "1rem", fontWeight: 800, background: "#d07a6a", opacity: (newName.trim() && newPhone.trim()) ? 1 : 0.6 }}
                 >
