@@ -79,6 +79,8 @@ export default function ComprasPage() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [familyName, setFamilyName] = useState("");
+  const [familyBackgroundUrl, setFamilyBackgroundUrl] = useState("/family-bg.png");
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [view, setView] = useState<"lista" | "analises">("lista");
@@ -152,6 +154,16 @@ export default function ComprasPage() {
 
     setFamilyId(me.family_id);
     setMemberId(me.id);
+
+    const { data: famRow } = await supabase
+      .from("acalanto_families")
+      .select("name, background_url")
+      .eq("id", me.family_id)
+      .single();
+    if (famRow) {
+      setFamilyName(famRow.name);
+      if (famRow.background_url) setFamilyBackgroundUrl(famRow.background_url);
+    }
 
     let { data: listRows, error: listsError } = await supabase
       .from("acalanto_shopping_lists")
@@ -544,7 +556,7 @@ export default function ComprasPage() {
       </div>
 
       {view === "analises" && (
-        <AnalisesCompras items={items} lists={lists} categories={categories} />
+        <AnalisesCompras items={items} lists={lists} categories={categories} familyName={familyName} familyBackgroundUrl={familyBackgroundUrl} />
       )}
 
       {view === "lista" && (
