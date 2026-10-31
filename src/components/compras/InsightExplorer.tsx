@@ -145,6 +145,189 @@ export function useShoppingEvents(items: ShoppingItem[], lists: ShoppingList[]):
   }, [items, lists]);
 }
 
+export interface Tip {
+  id: string;
+  emoji: string;
+  title: string;
+  detail: string;
+  selection?: Selection;
+  magnitude: number;
+}
+
+type MonthBucket = "inicio" | "meio" | "fim";
+const bucketLabel: Record<MonthBucket, string> = {
+  inicio: "início do mês (dias 1–10)",
+  meio: "meio do mês (dias 11–20)",
+  fim: "final do mês (dias 21–31)",
+};
+
+function monthBucket(d: Date): MonthBucket {
+  const day = d.getDate();
+  if (day <= 10) return "inicio";
+  if (day <= 20) return "meio";
+  return "fim";
+}
+
+export function generateTips(events: Event[], categories: Category[]): Tip[] {
+  const tips: Tip[] = [];
+  if (events.length < 4) return tips;
+
+  const byProduct = new Map<string, Event[]>();
+  events.forEach((e) => {
+    const k = normalize(e.name);
+    const arr = byProduct.get(k) ?? [];
+    arr.push(e);
+    byProduct.set(k, arr);
+  });
+
+  // 1. Padrão de preço por período do mês, por produto
+  byProduct.forEach((evs, key) => {
+    if (evs.length < 4) return;
+    const buckets: Record<MonthBucket, number[]> = { inicio: [], meio: [], fim: [] };
+    evs.forEach((e) => buckets[monthBucket(new Date(e.date))].push(e.price));
+    const bucketAvgs = (Object.entries(buckets) as [MonthBucket, number[]][])
+      .filter(([, prices]) => prices.length > 0)
+      .map(([b, prices]) => ({ b, avg: prices.reduce((s, p) => s + p, 0) / prices.length, count: prices.length }));
+    if (bucketAvgs.length < 2) return;
+    const cheapest = bucketAvgs.reduce((min, b) => (b.avg < min.avg ? b : min));
+    const priciest = bucketAvgs.reduce((max, b) => (b.avg > max.avg ? b : max));
+    if (cheapest.b === priciest.b || priciest.avg <= 0) return;
+    const spread = ((priciest.avg - cheapest.avg) / priciest.avg) * 100;
+    if (spread < 12) return;
+    tips.push({
+      id: `month-${key}`,
+      emoji: evs[0].emoji,
+      title: `${evs[0].name} costuma sair mais barato no ${bucketLabel[cheapest.b]}`,
+      detail: `Média de ${fmt(cheapest.avg)} nesse período, contra ${fmt(priciest.avg)} no ${bucketLabel[priciest.b]} — ${spread.toFixed(0)}% de diferença (${evs.length} compras no histórico).`,
+      selection: { type: "product", key },
+      magnitude: spread * Math.log(evs.length + 1),
+    });
+  });
+
+  // 2. Comparação entre mercados pros mesmos itens
+  const byProductStore = new Map<string, Map<string, number[]>>();
+  events.forEach((e) => {
+    if (!e.store) return;
+    const pk = normalize(e.name);
+    const sk = normalize(e.store);
+    const storeMap = byProductStore.get(pk) ?? new Map<string, number[]>();
+    const arr = storeMap.get(sk) ?? [];
+    arr.push(e.price);
+    storeMap.set(sk, arr);
+    byProductStore.set(pk, storeMap);
+  });
+  byProductStore.forEach((storeMap, pk) => {
+    if (storeMap.size < 2) return;
+    const avgs = Array.from(storeMap.entries()).map(([sk, prices]) => ({ sk, avg: prices.reduce((s, p) => s + p, 0) / prices.length, count: prices.length }));
+    const cheapest = avgs.reduce((min, a) => (a.avg < min.avg ? a : min));
+    const priciest = avgs.reduce((max, a) => (a.avg > max.avg ? a : max));
+    if (cheapest.sk === priciest.sk || priciest.avg <= 0) return;
+    const spread = ((priciest.avg - cheapest.avg) / priciest.avg) * 100;
+    if (spread < 10) return;
+    const sample = events.find((e) => normalize(e.name) === pk);
+    const cheapStoreName = events.find((e) => e.store && normalize(e.store) === cheapest.sk)?.store ?? cheapest.sk;
+    const priceyStoreName = events.find((e) => e.store && normalize(e.store) === priciest.sk)?.store ?? priciest.sk;
+    tips.push({
+      id: `store-${pk}`,
+      emoji: sample?.emoji ?? "📦",
+      title: `${sample?.name ?? pk} sai mais barato no ${cheapStoreName}`,
+      detail: `Média de ${fmt(cheapest.avg)} no ${cheapStoreName}, contra ${fmt(priciest.avg)} no ${priceyStoreName} — ${spread.toFixed(0)}% de diferença.`,
+      selection: { type: "product", key: pk },
+      magnitude: spread * Math.log(cheapest.count + priciest.count + 1),
+    });
+  });
+
+  // 3. Itens recorrentes possivelmente atrasados pra repor
+  byProduct.forEach((evs, key) => {
+    if (evs.length < 3) return;
+    const sorted = [...evs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const gaps: number[] = [];
+    for (let i = 1; i < sorted.length; i++) {
+      gaps.push((new Date(sorted[i].date).getTime() - new Date(sorted[i - 1].date).getTime()) / 86400000);
+    }
+    const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+    const lastDate = new Date(sorted[sorted.length - 1].date);
+    const daysSince = (Date.now() - lastDate.getTime()) / 86400000;
+    if (avgGap >= 5 && daysSince > avgGap * 1.4) {
+      tips.push({
+        id: `overdue-${key}`,
+        emoji: sorted[0].emoji,
+        title: `Já faz ${Math.round(daysSince)} dias sem comprar ${sorted[0].name}`,
+        detail: `Normalmente você compra a cada ${Math.round(avgGap)} dias — pode estar na hora de repor.`,
+        selection: { type: "product", key },
+        magnitude: (daysSince / avgGap) * 10,
+      });
+    }
+  });
+
+  // 4. Categoria em alta (mês atual vs mês anterior)
+  const now = new Date();
+  const thisM = monthKey(now);
+  const lastM = monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const catThis = new Map<string, number>();
+  const catLast = new Map<string, number>();
+  events.forEach((e) => {
+    const mk = monthKey(new Date(e.date));
+    const s = e.price * e.quantity;
+    if (mk === thisM) catThis.set(e.category, (catThis.get(e.category) ?? 0) + s);
+    if (mk === lastM) catLast.set(e.category, (catLast.get(e.category) ?? 0) + s);
+  });
+  catThis.forEach((thisTotal, cat) => {
+    const lastTotal = catLast.get(cat) ?? 0;
+    if (lastTotal < 10) return;
+    const change = ((thisTotal - lastTotal) / lastTotal) * 100;
+    if (change < 25) return;
+    tips.push({
+      id: `cat-rise-${cat}`,
+      emoji: categories.find((c) => c.name === cat)?.emoji ?? "📦",
+      title: `Gastos com ${cat} subiram ${change.toFixed(0)}% esse mês`,
+      detail: `${fmt(lastTotal)} no mês passado → ${fmt(thisTotal)} esse mês.`,
+      selection: { type: "category", key: cat },
+      magnitude: change,
+    });
+  });
+
+  return tips.sort((a, b) => b.magnitude - a.magnitude).slice(0, 10);
+}
+
+export function InsightsTips({ events, categories, onSelect }: {
+  events: Event[];
+  categories: Category[];
+  onSelect: (s: Selection) => void;
+}) {
+  const tips = useMemo(() => generateTips(events, categories), [events, categories]);
+  if (tips.length === 0) return null;
+
+  return (
+    <div className="card" style={{ padding: "1.25rem" }}>
+      <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        💡 Insights e dicas
+      </h3>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+        Gerado automaticamente a partir de todo o seu histórico de compras.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+        {tips.map((tip) => (
+          <div
+            key={tip.id}
+            onClick={() => tip.selection && onSelect(tip.selection)}
+            style={{
+              display: "flex", alignItems: "flex-start", gap: "0.7rem", padding: "0.75rem 0.9rem",
+              background: "var(--bg-secondary)", borderRadius: 12, cursor: tip.selection ? "pointer" : "default",
+            }}
+          >
+            <span style={{ fontSize: "1.2rem", flexShrink: 0 }}>{tip.emoji}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>{tip.title}</div>
+              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{tip.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ExplorerPicker({ events, categories, selection, onSelect }: {
   events: Event[];
   categories: Category[];
