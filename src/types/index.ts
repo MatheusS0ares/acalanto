@@ -114,6 +114,17 @@ export interface ShoppingItem {
   created_at: string;
 }
 
+// Unificação de produtos com nomes diferentes nas Análises (ex: "ovo" e "ovos")
+export interface ProductAlias {
+  id: string;
+  family_id: string;
+  alias_name: string;
+  canonical_name: string;
+  canonical_label: string;
+  canonical_emoji: string;
+  created_at: string;
+}
+
 // Tarefas
 export interface Task {
   id: string;
