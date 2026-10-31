@@ -1,12 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   MdAdd, MdCheck, MdClose, MdDescription, MdEdit,
-  MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack, MdBarChart,
+  MdContentCopy, MdShare, MdList, MdContentPaste, MdArrowBack, MdBarChart, MdLink,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
-import type { ShoppingList, ShoppingItem } from "@/types";
+import type { ShoppingList, ShoppingItem, ProductAlias } from "@/types";
 import { AnalisesCompras } from "@/components/compras/AnalisesCompras";
+import { ProductAliasManager } from "@/components/compras/ProductAliasManager";
 
 interface Category {
   name: string;
@@ -83,6 +84,8 @@ export default function ComprasPage() {
   const [familyBackgroundUrl, setFamilyBackgroundUrl] = useState("/family-bg.png");
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [aliases, setAliases] = useState<ProductAlias[]>([]);
+  const [aliasModal, setAliasModal] = useState(false);
   const [view, setView] = useState<"lista" | "analises">("lista");
 
   const [listFilter, setListFilter] = useState<string>("all");
@@ -197,8 +200,31 @@ export default function ComprasPage() {
       : { data: [] };
 
     setItems(itemRows ?? []);
+
+    const { data: aliasRows } = await supabase
+      .from("acalanto_product_aliases")
+      .select("*")
+      .eq("family_id", me.family_id);
+    setAliases(aliasRows ?? []);
+
     setLoading(false);
   }
+
+  async function reloadAliases() {
+    if (!familyId) return;
+    const supabase = createClient();
+    const { data } = await supabase.from("acalanto_product_aliases").select("*").eq("family_id", familyId);
+    setAliases(data ?? []);
+  }
+
+  const aliasedItems = useMemo(() => {
+    if (!aliases.length) return items;
+    const map = new Map(aliases.map((a) => [a.alias_name, a]));
+    return items.map((i) => {
+      const a = map.get(i.name.trim().toLowerCase());
+      return a ? { ...i, name: a.canonical_label, emoji: a.canonical_emoji } : i;
+    });
+  }, [items, aliases]);
 
   const filteredByList = listFilter === "all" ? items : items.filter((i) => i.list_id === listFilter);
   const filtered = filteredByList.filter((i) => {
@@ -556,7 +582,14 @@ export default function ComprasPage() {
       </div>
 
       {view === "analises" && (
-        <AnalisesCompras items={items} lists={lists} categories={categories} familyName={familyName} familyBackgroundUrl={familyBackgroundUrl} />
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.9rem" }}>
+            <button onClick={() => setAliasModal(true)} className="btn-secondary" style={{ fontSize: "0.78rem" }}>
+              <MdLink size={15} /> Unificar itens duplicados
+            </button>
+          </div>
+          <AnalisesCompras items={aliasedItems} lists={lists} categories={categories} familyName={familyName} familyBackgroundUrl={familyBackgroundUrl} />
+        </>
       )}
 
       {view === "lista" && (
@@ -1051,6 +1084,17 @@ export default function ComprasPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Modal unificar produtos */}
+      {aliasModal && familyId && (
+        <ProductAliasManager
+          items={items}
+          aliases={aliases}
+          familyId={familyId}
+          onClose={() => setAliasModal(false)}
+          onChanged={reloadAliases}
+        />
       )}
 
       {/* Modal relatório */}
