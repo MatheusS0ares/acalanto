@@ -6,7 +6,7 @@ import {
 } from "recharts";
 import { MdTrendingUp, MdTrendingDown, MdShoppingCart, MdReceiptLong, MdClose } from "react-icons/md";
 import type { ShoppingList, ShoppingItem } from "@/types";
-import { useShoppingEvents, ExplorerPicker, InsightPanel, type Selection } from "./InsightExplorer";
+import { useShoppingEvents, ExplorerPicker, InsightPanel, InsightsTips, type Selection } from "./InsightExplorer";
 
 interface Category {
   name: string;
@@ -189,6 +189,9 @@ export function AnalisesCompras({ items, lists, categories, familyName, familyBa
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+      {/* Insights e dicas automáticas, com base em todo o histórico */}
+      <InsightsTips events={allEvents} categories={categories} onSelect={setSelection} />
+
       {/* Explorar e analisar — selecione lista, produto, categoria ou mercado */}
       <ExplorerPicker events={allEvents} categories={categories} selection={selection} onSelect={setSelection} />
       {selection && (
