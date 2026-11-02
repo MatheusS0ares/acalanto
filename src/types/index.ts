@@ -200,3 +200,22 @@ export interface EmergencyContact {
   notes?: string;
   priority: number;
 }
+
+// Leitura
+export type BookStatus = "quero_ler" | "lendo" | "lido" | "abandonado";
+
+export interface Book {
+  id: string;
+  family_id: string;
+  reader_id: string | null;
+  title: string;
+  author?: string | null;
+  genre?: string | null;
+  status: BookStatus;
+  pages?: number | null;
+  rating?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
