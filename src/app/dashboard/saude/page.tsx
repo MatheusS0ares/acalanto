@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { MdAdd, MdVaccines, MdClose, MdNotifications } from "react-icons/md";
+import { MdAdd, MdVaccines, MdClose, MdNotifications, MdFitnessCenter, MdLocalFireDepartment, MdEmojiEvents } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type { FamilyMember } from "@/types";
 
-type Section = "consultas" | "medicamentos" | "vacinas";
+type Section = "consultas" | "medicamentos" | "vacinas" | "atividade";
 type RecordType = "appointment" | "exam" | "vaccine";
+type Quality = "otima" | "ok" | "dificil";
 
 interface HealthRecord {
   id: string;
@@ -29,7 +30,67 @@ interface Medication {
   refill_alert: number;
 }
 
+interface ExerciseLog {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  exercise_name: string;
+  sets: number | null;
+  reps: number | null;
+  duration_minutes: number | null;
+  quality: Quality | null;
+  date: string;
+  notes: string | null;
+}
+
+interface ExercisePrefill {
+  name?: string;
+  sets?: number;
+  reps?: number;
+  durationMinutes?: number;
+}
+
 const emojiFor: Record<RecordType, string> = { appointment: "🏥", exam: "🩸", vaccine: "💉" };
+
+const qualityConfig: Record<Quality, { label: string; emoji: string; color: string }> = {
+  otima: { label: "Mandei bem", emoji: "💪", color: "#7aab8a" },
+  ok: { label: "Mais ou menos", emoji: "😐", color: "#c99a40" },
+  dificil: { label: "Não consegui", emoji: "😓", color: "#d06a6a" },
+};
+
+interface SuggestedExercise {
+  name: string;
+  emoji: string;
+  sets?: number;
+  reps?: number;
+  durationMinutes?: number;
+  tag: string;
+}
+
+const suggestedExercises: SuggestedExercise[] = [
+  { name: "Flexão de braço", emoji: "💪", sets: 3, reps: 10, tag: "Força" },
+  { name: "Abdominal", emoji: "🔥", sets: 3, reps: 15, tag: "Core" },
+  { name: "Agachamento", emoji: "🦵", sets: 3, reps: 15, tag: "Pernas" },
+  { name: "Prancha", emoji: "🧘", sets: 3, durationMinutes: 1, tag: "Core" },
+  { name: "Caminhada", emoji: "🚶", durationMinutes: 30, tag: "Cardio" },
+  { name: "Corrida leve", emoji: "🏃", durationMinutes: 20, tag: "Cardio" },
+  { name: "Alongamento", emoji: "🤸", durationMinutes: 10, tag: "Mobilidade" },
+  { name: "Polichinelo", emoji: "⭐", sets: 3, reps: 20, tag: "Cardio" },
+  { name: "Afundo (passada)", emoji: "🦿", sets: 3, reps: 12, tag: "Pernas" },
+  { name: "Elevação de panturrilha", emoji: "🦶", sets: 3, reps: 20, tag: "Pernas" },
+];
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function startOfWeekStr() {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
 
 type AddKind = "consulta" | "medicamento" | "vacina" | null;
 
@@ -39,8 +100,10 @@ export default function SaudePage() {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [records, setRecords] = useState<HealthRecord[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [exerciseLogs, setExerciseLogs] = useState<ExerciseLog[]>([]);
   const [section, setSection] = useState<Section>("consultas");
   const [addKind, setAddKind] = useState<AddKind>(null);
+  const [exerciseModal, setExerciseModal] = useState<ExercisePrefill | null>(null);
   const [toast, setToast] = useState("");
 
   useEffect(() => { load(); }, []);
@@ -78,6 +141,13 @@ export default function SaudePage() {
       .eq("family_id", me.family_id)
       .eq("active", true);
     setMedications(medRows ?? []);
+
+    const { data: exerciseRows } = await supabase
+      .from("acalanto_exercise_logs")
+      .select("id, family_id, member_id, exercise_name, sets, reps, duration_minutes, quality, date, notes")
+      .eq("family_id", me.family_id)
+      .order("date", { ascending: false });
+    setExerciseLogs(exerciseRows ?? []);
 
     setLoading(false);
   }
@@ -143,11 +213,62 @@ export default function SaudePage() {
     await supabase.from("acalanto_medications").update({ stock: next }).eq("id", med.id);
   }
 
+  async function addExerciseLog(input: {
+    exerciseName: string; memberId: string; date: string;
+    sets?: number; reps?: number; durationMinutes?: number; quality?: Quality; notes?: string;
+  }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: ExerciseLog = {
+      id, family_id: familyId, member_id: input.memberId || null, exercise_name: input.exerciseName,
+      sets: input.sets ?? null, reps: input.reps ?? null, duration_minutes: input.durationMinutes ?? null,
+      quality: input.quality ?? null, date: input.date, notes: input.notes || null,
+    };
+    setExerciseLogs((prev) => [row, ...prev]);
+    showToast(`✅ "${input.exerciseName}" registrado!`);
+    setExerciseModal(null);
+    const { error } = await supabase.from("acalanto_exercise_logs").insert({
+      id, family_id: familyId, member_id: input.memberId || null, exercise_name: input.exerciseName,
+      sets: input.sets ?? null, reps: input.reps ?? null, duration_minutes: input.durationMinutes ?? null,
+      quality: input.quality ?? null, date: input.date, notes: input.notes || null,
+    });
+    if (error) {
+      setExerciseLogs((prev) => prev.filter((l) => l.id !== id));
+      showToast("Erro ao registrar atividade");
+    }
+  }
+
+  async function removeExerciseLog(log: ExerciseLog) {
+    const supabase = createClient();
+    setExerciseLogs((prev) => prev.filter((l) => l.id !== log.id));
+    await supabase.from("acalanto_exercise_logs").delete().eq("id", log.id);
+  }
+
   const sections: { id: Section; label: string; icon: string; desc: string }[] = [
-    { id: "consultas",    label: "Consultas",    icon: "🏥", desc: "Médicos e exames agendados" },
-    { id: "medicamentos", label: "Remédios",      icon: "💊", desc: "O que tomar e quando" },
-    { id: "vacinas",      label: "Vacinas",       icon: "💉", desc: "Carteirinha da família" },
+    { id: "consultas",    label: "Consultas",       icon: "🏥", desc: "Médicos e exames agendados" },
+    { id: "medicamentos", label: "Remédios",         icon: "💊", desc: "O que tomar e quando" },
+    { id: "vacinas",      label: "Vacinas",          icon: "💉", desc: "Carteirinha da família" },
+    { id: "atividade",    label: "Atividade física", icon: "🏋️", desc: "Exercícios e sequência" },
   ];
+
+  // Placar e sequência da atividade física — separado dos pontos de Tarefas
+  const weekStart = startOfWeekStr();
+  const activityBoard = members
+    .map((m) => {
+      const myLogs = exerciseLogs.filter((l) => l.member_id === m.id);
+      const weekDays = new Set(myLogs.filter((l) => l.date >= weekStart).map((l) => l.date)).size;
+      let streak = 0;
+      const loggedDays = new Set(myLogs.map((l) => l.date));
+      const cursor = new Date();
+      while (loggedDays.has(cursor.toISOString().slice(0, 10))) {
+        streak += 1;
+        cursor.setDate(cursor.getDate() - 1);
+      }
+      return { id: m.id, name: m.name, weekDays, streak };
+    })
+    .sort((a, b) => b.weekDays - a.weekDays);
+
+  const strugglingLately = exerciseLogs.filter((l) => l.quality === "dificil" && l.date >= weekStart);
 
   if (loading) {
     return (
@@ -198,7 +319,7 @@ export default function SaudePage() {
       </button>
 
       {/* Seletor de seção */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.625rem", marginBottom: "1.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.625rem", marginBottom: "1.75rem" }}>
         {sections.map(({ id, label, icon, desc }) => (
           <button
             key={id}
@@ -317,6 +438,121 @@ export default function SaudePage() {
         </div>
       )}
 
+      {/* Atividade física */}
+      {section === "atividade" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          <button
+            onClick={() => setExerciseModal({})}
+            style={{ width: "100%", padding: "1rem 1.25rem", borderRadius: 16, border: "none", cursor: "pointer", background: "#d06a6a", color: "#fff", fontSize: "1.02rem", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.625rem", boxShadow: "0 4px 16px rgba(208,106,106,0.35)" }}
+          >
+            <MdFitnessCenter size={22} /> Registrar atividade
+          </button>
+
+          {/* Placar da semana */}
+          {members.length > 0 && (
+            <div className="card" style={{ padding: "1.125rem" }}>
+              <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <MdEmojiEvents size={18} color="#c99a40" /> Placar da semana
+              </h3>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
+                Dias com atividade registrada essa semana — separado dos pontos de Tarefas
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                {activityBoard.map((a, idx) => (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                    <span style={{ fontSize: "0.95rem", flexShrink: 0 }}>{idx === 0 && a.weekDays > 0 ? "🏆" : "▫️"}</span>
+                    <span style={{ flex: 1, fontSize: "0.88rem", fontWeight: 600, color: "var(--text-primary)" }}>{a.name}</span>
+                    {a.streak > 1 && (
+                      <span style={{ display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.75rem", fontWeight: 700, color: "#d06a6a" }}>
+                        <MdLocalFireDepartment size={14} /> {a.streak}
+                      </span>
+                    )}
+                    <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-secondary)" }}>{a.weekDays}/7 dias</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Precisa melhorar */}
+          {strugglingLately.length > 0 && (
+            <div style={{ background: "rgba(208,106,106,0.1)", border: "1.5px solid rgba(208,106,106,0.3)", borderRadius: 14, padding: "1rem 1.125rem" }}>
+              <div style={{ fontSize: "0.88rem", fontWeight: 700, color: "#d06a6a", marginBottom: "0.4rem" }}>
+                😓 Precisa melhorar essa semana
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                {strugglingLately.map((l) => (
+                  <div key={l.id} style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                    {l.exercise_name} — {memberName(l.member_id)} em {new Date(l.date + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sugestões */}
+          <div>
+            <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+              Sugestões do dia a dia
+            </h3>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
+              Toque numa sugestão pra já registrar com as séries recomendadas
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.625rem" }}>
+              {suggestedExercises.map((ex) => (
+                <button
+                  key={ex.name}
+                  onClick={() => setExerciseModal({ name: ex.name, sets: ex.sets, reps: ex.reps, durationMinutes: ex.durationMinutes })}
+                  className="card"
+                  style={{ padding: "0.875rem", textAlign: "left", cursor: "pointer", border: "1.5px solid var(--border)" }}
+                >
+                  <div style={{ fontSize: "1.3rem", marginBottom: "0.3rem" }}>{ex.emoji}</div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.15rem" }}>{ex.name}</div>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {ex.sets && ex.reps ? `${ex.sets}x${ex.reps}` : ex.durationMinutes ? `${ex.durationMinutes} min` : ex.tag}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Histórico */}
+          <div>
+            <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.9rem" }}>
+              Histórico
+            </h3>
+            {exerciseLogs.length === 0 && (
+              <div style={{ textAlign: "center", padding: "1.5rem", color: "var(--text-muted)" }}>Nenhuma atividade registrada ainda.</div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              {exerciseLogs.map((log) => {
+                const q = log.quality ? qualityConfig[log.quality] : null;
+                return (
+                  <div key={log.id} className="card" style={{ padding: "0.9rem 1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)" }}>{log.exercise_name}</div>
+                      <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                        👤 {memberName(log.member_id)} · {new Date(log.date + "T12:00:00").toLocaleDateString("pt-BR")}
+                        {log.sets && log.reps ? ` · ${log.sets}x${log.reps}` : ""}
+                        {log.duration_minutes ? ` · ${log.duration_minutes} min` : ""}
+                      </div>
+                    </div>
+                    {q && (
+                      <span style={{ fontSize: "0.72rem", fontWeight: 700, color: q.color, background: `${q.color}18`, padding: "0.2rem 0.55rem", borderRadius: 999, flexShrink: 0, whiteSpace: "nowrap" }}>
+                        {q.emoji} {q.label}
+                      </span>
+                    )}
+                    <button onClick={() => removeExerciseLog(log)} aria-label="Remover" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.25rem", flexShrink: 0 }}>
+                      <MdClose size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: escolher o que registrar */}
       {addKind && (
         <AddHealthModal
@@ -326,6 +562,16 @@ export default function SaudePage() {
           onChangeKind={setAddKind}
           onAddRecord={addRecord}
           onAddMedication={addMedication}
+        />
+      )}
+
+      {/* Modal: registrar atividade física */}
+      {exerciseModal && (
+        <AddExerciseModal
+          prefill={exerciseModal}
+          members={members}
+          onClose={() => setExerciseModal(null)}
+          onSave={addExerciseLog}
         />
       )}
     </div>
@@ -453,6 +699,105 @@ function AddHealthModal({ kind, members, onClose, onChangeKind, onAddRecord, onA
           <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
             <button onClick={onClose} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem" }}>Cancelar</button>
             <button onClick={save} disabled={!title.trim()} className="btn-primary" style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontWeight: 800, background: "#d06a6a", opacity: title.trim() ? 1 : 0.6 }}>
+              <MdAdd size={20} /> Salvar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddExerciseModal({ prefill, members, onClose, onSave }: {
+  prefill: ExercisePrefill;
+  members: FamilyMember[];
+  onClose: () => void;
+  onSave: (input: {
+    exerciseName: string; memberId: string; date: string;
+    sets?: number; reps?: number; durationMinutes?: number; quality?: Quality; notes?: string;
+  }) => void;
+}) {
+  const [exerciseName, setExerciseName] = useState(prefill.name ?? "");
+  const [memberId, setMemberId] = useState(members[0]?.id ?? "");
+  const [date, setDate] = useState(todayStr());
+  const [sets, setSets] = useState(prefill.sets != null ? String(prefill.sets) : "");
+  const [reps, setReps] = useState(prefill.reps != null ? String(prefill.reps) : "");
+  const [durationMinutes, setDurationMinutes] = useState(prefill.durationMinutes != null ? String(prefill.durationMinutes) : "");
+  const [quality, setQuality] = useState<Quality | null>(null);
+  const [notes, setNotes] = useState("");
+
+  function save() {
+    if (!exerciseName.trim()) return;
+    onSave({
+      exerciseName: exerciseName.trim(), memberId, date,
+      sets: sets.trim() ? parseInt(sets, 10) : undefined,
+      reps: reps.trim() ? parseInt(reps, 10) : undefined,
+      durationMinutes: durationMinutes.trim() ? parseInt(durationMinutes, 10) : undefined,
+      quality: quality ?? undefined,
+      notes: notes.trim() || undefined,
+    });
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: "var(--bg-card)", borderRadius: "1.25rem 1.25rem 0 0", width: "100%", maxWidth: 540, padding: "1.5rem", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ width: 44, height: 5, borderRadius: 3, background: "var(--border)", margin: "0 auto 1.5rem" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+          <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--text-primary)" }}>🏋️ Registrar atividade</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.5rem" }}><MdClose size={22} /></button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Atividade *</label>
+            <input type="text" value={exerciseName} onChange={(e) => setExerciseName(e.target.value)} placeholder="Ex: Flexão de braço" className="input-field" autoFocus />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Quem?</label>
+            <select value={memberId} onChange={(e) => setMemberId(e.target.value)} className="input-field" style={{ cursor: "pointer" }}>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Data</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Duração (min)</label>
+              <input type="number" min="0" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} placeholder="Opcional" className="input-field" />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Séries</label>
+              <input type="number" min="0" value={sets} onChange={(e) => setSets(e.target.value)} placeholder="Opcional" className="input-field" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Repetições</label>
+              <input type="number" min="0" value={reps} onChange={(e) => setReps(e.target.value)} placeholder="Opcional" className="input-field" />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Como foi?</label>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              {(Object.keys(qualityConfig) as Quality[]).map((q) => (
+                <button key={q} type="button" onClick={() => setQuality(quality === q ? null : q)}
+                  style={{ flex: 1, padding: "0.6rem 0.4rem", borderRadius: 10, border: `1.5px solid ${quality === q ? qualityConfig[q].color : "var(--border)"}`, background: quality === q ? `${qualityConfig[q].color}18` : "transparent", color: quality === q ? qualityConfig[q].color : "var(--text-muted)", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}>
+                  {qualityConfig[q].emoji} {qualityConfig[q].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
+            <button onClick={onClose} className="btn-secondary" style={{ flex: 1, justifyContent: "center", padding: "0.875rem" }}>Cancelar</button>
+            <button onClick={save} disabled={!exerciseName.trim()} className="btn-primary" style={{ flex: 2, justifyContent: "center", padding: "0.875rem", fontWeight: 800, background: "#d06a6a", opacity: exerciseName.trim() ? 1 : 0.6 }}>
               <MdAdd size={20} /> Salvar
             </button>
           </div>
