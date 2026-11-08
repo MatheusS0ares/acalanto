@@ -219,3 +219,37 @@ export interface Book {
   notes?: string | null;
   created_at: string;
 }
+
+// Estudos
+export interface StudySubject {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  name: string;
+  emoji: string;
+  created_at: string;
+}
+
+export interface StudyTopic {
+  id: string;
+  family_id: string;
+  subject_id: string;
+  name: string;
+  created_at: string;
+}
+
+export type StudyConfidence = "certeza" | "duvida" | "chute";
+
+export interface StudyLog {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  subject_id: string;
+  topic_id: string | null;
+  correct: boolean;
+  banca?: string | null;
+  confidence?: StudyConfidence | null;
+  note?: string | null;
+  date: string;
+  created_at: string;
+}

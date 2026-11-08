@@ -31,6 +31,7 @@ const TAB_OPTIONS = [
   { key: "pets", label: "Pets" },
   { key: "memorias", label: "Memórias" },
   { key: "leitura", label: "Leitura" },
+  { key: "estudos", label: "Estudos" },
   { key: "veiculos", label: "Veículos" },
   { key: "contatos", label: "Emergência" },
   { key: "senhas", label: "Cofre" },

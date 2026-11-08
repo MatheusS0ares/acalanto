@@ -6,7 +6,7 @@ import {
   MdCheckBox, MdCalendarMonth, MdFavorite, MdDirectionsCar,
   MdContactPhone, MdKitchen, MdSettings, MdLogout, MdClose,
   MdPeople, MdRestaurant, MdBuild, MdLock, MdPhotoLibrary, MdPets,
-  MdAdminPanelSettings, MdMenuBook,
+  MdAdminPanelSettings, MdMenuBook, MdSchool,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -25,6 +25,7 @@ const navItems = [
   { key: "pets", href: "/dashboard/pets", icon: MdPets, label: "Pets", group: "Família" },
   { key: "memorias", href: "/dashboard/memorias", icon: MdPhotoLibrary, label: "Memórias", group: "Família" },
   { key: "leitura", href: "/dashboard/leitura", icon: MdMenuBook, label: "Leitura", group: "Família" },
+  { key: "estudos", href: "/dashboard/estudos", icon: MdSchool, label: "Estudos", group: "Família" },
   { key: "veiculos", href: "/dashboard/veiculos", icon: MdDirectionsCar, label: "Veículos", group: "Outros" },
   { key: "contatos", href: "/dashboard/contatos", icon: MdContactPhone, label: "Emergência", group: "Outros" },
   { key: "senhas", href: "/dashboard/senhas", icon: MdLock, label: "Cofre", group: "Outros" },
