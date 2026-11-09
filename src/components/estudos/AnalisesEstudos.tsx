@@ -4,7 +4,7 @@ import {
   BarChart, Bar, LineChart, Line, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { MdTrendingUp, MdTrendingDown, MdLocalFireDepartment, MdPriorityHigh } from "react-icons/md";
+import { MdTrendingUp, MdTrendingDown, MdLocalFireDepartment, MdPriorityHigh, MdInsights, MdClose } from "react-icons/md";
 import type { StudySubject, StudyTopic, StudyLog, FamilyMember, StudyConfidence } from "@/types";
 
 interface Props {
@@ -39,9 +39,18 @@ function pct(correct: number, total: number) {
   return total ? Math.round((correct / total) * 100) : 0;
 }
 
+function weekKey(d: Date) {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  date.setDate(date.getDate() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
 export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Props) {
   const [readerFilter, setReaderFilter] = useState<string>("all");
   const [period, setPeriod] = useState<Period>("30d");
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
 
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
   const topicMap = new Map(topics.map((t) => [t.id, t]));
@@ -92,8 +101,8 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
     if (l.correct) entry.correct += 1;
     bySubject.set(l.subject_id, entry);
   });
-  const subjectChart = Array.from(bySubject.values())
-    .map((s) => ({ name: `${s.emoji} ${s.label}`, acc: pct(s.correct, s.total), total: s.total }))
+  const subjectChart = Array.from(bySubject.entries())
+    .map(([id, s]) => ({ id, name: `${s.emoji} ${s.label}`, acc: pct(s.correct, s.total), total: s.total }))
     .sort((a, b) => b.total - a.total);
 
   // Pontos fracos — por assunto (ou matéria quando sem assunto), mínimo 3 questões
@@ -115,13 +124,6 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
     .slice(0, 5);
 
   // Evolução — % de acerto por semana
-  function weekKey(d: Date) {
-    const date = new Date(d);
-    const day = date.getDay();
-    const diff = (day === 0 ? -6 : 1) - day;
-    date.setDate(date.getDate() + diff);
-    return date.toISOString().slice(0, 10);
-  }
   const byWeek = new Map<string, { total: number; correct: number }>();
   byReader.forEach((l) => {
     const wk = weekKey(new Date(l.date + "T12:00:00"));
@@ -214,22 +216,35 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
       {/* Acerto por matéria */}
       {subjectChart.length > 0 && (
         <div className="card" style={{ padding: "1.25rem" }}>
-          <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "1rem" }}>
+          <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.2rem" }}>
             Acerto por matéria
           </h3>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
+            Toque numa matéria pra ver o Raio-X completo dela
+          </p>
           <div style={{ width: "100%", height: Math.max(100, subjectChart.length * 40) }}>
             <ResponsiveContainer>
               <BarChart data={subjectChart} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
                 <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={120} />
                 <Tooltip formatter={(v: number, _n, p) => [`${v}% (${p.payload.total} questões)`, "Acerto"]} contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="acc" radius={[0, 6, 6, 0]}>
+                <Bar dataKey="acc" radius={[0, 6, 6, 0]} onClick={(d) => setSelectedSubjectId((d as unknown as { id: string }).id)} style={{ cursor: "pointer" }}>
                   {subjectChart.map((s, idx) => <Cell key={idx} fill={accuracyColor(s.acc)} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
+      )}
+
+      {selectedSubjectId && subjectMap.has(selectedSubjectId) && (
+        <RaioXMateria
+          subject={subjectMap.get(selectedSubjectId)!}
+          allLogsForSubject={byReader.filter((l) => l.subject_id === selectedSubjectId)}
+          topics={topics.filter((t) => t.subject_id === selectedSubjectId)}
+          accent={accent}
+          onClose={() => setSelectedSubjectId(null)}
+        />
       )}
 
       {/* Pontos fracos */}
@@ -319,6 +334,202 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RaioXMateria({ subject, allLogsForSubject, topics, accent, onClose }: {
+  subject: StudySubject;
+  allLogsForSubject: StudyLog[];
+  topics: StudyTopic[];
+  accent: string;
+  onClose: () => void;
+}) {
+  const topicMap = new Map(topics.map((t) => [t.id, t]));
+  const total = allLogsForSubject.length;
+  const correct = allLogsForSubject.filter((l) => l.correct).length;
+  const acc = pct(correct, total);
+
+  const sortedDates = [...allLogsForSubject.map((l) => l.date)].sort();
+  const firstDate = sortedDates[0] ?? null;
+  const lastDate = sortedDates[sortedDates.length - 1] ?? null;
+  const daysSincePracticed = lastDate ? Math.round((Date.now() - new Date(lastDate + "T12:00:00").getTime()) / 86400000) : null;
+
+  const loggedDays = new Set(allLogsForSubject.map((l) => l.date));
+  let streak = 0;
+  const cursor = new Date();
+  while (loggedDays.has(cursor.toISOString().slice(0, 10))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  const weeksSpan = firstDate ? Math.max(1, (Date.now() - new Date(firstDate + "T12:00:00").getTime()) / (7 * 86400000)) : 1;
+  const pace = total / weeksSpan;
+
+  // Acerto por assunto — todos, não só os fracos
+  const byTopic = new Map<string, { label: string; total: number; correct: number }>();
+  allLogsForSubject.forEach((l) => {
+    const key = l.topic_id ?? "__geral__";
+    const label = l.topic_id ? (topicMap.get(l.topic_id)?.name ?? "Assunto removido") : "Geral (sem assunto)";
+    const entry = byTopic.get(key) ?? { label, total: 0, correct: 0 };
+    entry.total += 1;
+    if (l.correct) entry.correct += 1;
+    byTopic.set(key, entry);
+  });
+  const topicChart = Array.from(byTopic.values())
+    .map((t) => ({ ...t, acc: pct(t.correct, t.total) }))
+    .sort((a, b) => b.acc - a.acc);
+
+  // Evolução semanal dessa matéria
+  const byWeek = new Map<string, { total: number; correct: number }>();
+  allLogsForSubject.forEach((l) => {
+    const wk = weekKey(new Date(l.date + "T12:00:00"));
+    const entry = byWeek.get(wk) ?? { total: 0, correct: 0 };
+    entry.total += 1;
+    if (l.correct) entry.correct += 1;
+    byWeek.set(wk, entry);
+  });
+  const weeklyTrend = Array.from(byWeek.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-10)
+    .map(([wk, v]) => ({ label: new Date(wk + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), acc: pct(v.correct, v.total), total: v.total }));
+
+  // Por confiança e por banca, dentro dessa matéria
+  const byConfidence = new Map<StudyConfidence, { total: number; correct: number }>();
+  const byBanca = new Map<string, { total: number; correct: number }>();
+  allLogsForSubject.forEach((l) => {
+    if (l.confidence) {
+      const e = byConfidence.get(l.confidence) ?? { total: 0, correct: 0 };
+      e.total += 1;
+      if (l.correct) e.correct += 1;
+      byConfidence.set(l.confidence, e);
+    }
+    if (l.banca) {
+      const e = byBanca.get(l.banca) ?? { total: 0, correct: 0 };
+      e.total += 1;
+      if (l.correct) e.correct += 1;
+      byBanca.set(l.banca, e);
+    }
+  });
+  const bancaChart = Array.from(byBanca.entries())
+    .map(([label, v]) => ({ label, acc: pct(v.correct, v.total), total: v.total }))
+    .sort((a, b) => b.total - a.total);
+
+  return (
+    <div className="card" style={{ padding: "1.25rem", border: `1.5px solid ${accent}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.25rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <span style={{ fontSize: "1.5rem" }}>{subject.emoji}</span>
+          <div>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.3rem" }}>
+              <MdInsights size={14} /> Raio-X da matéria
+            </div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary)" }}>{subject.name}</div>
+          </div>
+        </div>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MdClose size={22} /></button>
+      </div>
+
+      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+        Baseado em todo o histórico dessa matéria, sem filtro de período
+      </p>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "0.6rem", marginBottom: "1.25rem" }}>
+        <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Questões</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "var(--text-primary)" }}>{total}</div>
+        </div>
+        <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>% de acerto</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 800, color: accuracyColor(acc) }}>{acc}%</div>
+        </div>
+        <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Ritmo</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "var(--text-primary)" }}>{pace.toFixed(1)}/sem</div>
+        </div>
+        <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Sequência</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "var(--text-primary)" }}>{streak}d</div>
+        </div>
+        <div style={{ textAlign: "center", padding: "0.6rem 0.4rem", background: "var(--bg-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>Sem praticar</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 800, color: daysSincePracticed != null && daysSincePracticed > 7 ? "#d06a6a" : "var(--text-primary)" }}>
+            {daysSincePracticed != null ? `${daysSincePracticed}d` : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Acerto por assunto */}
+      {topicChart.length > 0 && (
+        <div style={{ marginBottom: "1.25rem" }}>
+          <h4 style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.6rem" }}>Acerto por assunto</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {topicChart.map((t) => (
+              <div key={t.label} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</span>
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{t.total}q</span>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: accuracyColor(t.acc), minWidth: 36, textAlign: "right" }}>{t.acc}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Evolução */}
+      {weeklyTrend.length > 1 && (
+        <div style={{ marginBottom: "1.25rem" }}>
+          <h4 style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.6rem" }}>Evolução semanal</h4>
+          <div style={{ width: "100%", height: 140 }}>
+            <ResponsiveContainer>
+              <LineChart data={weeklyTrend} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light)" />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text-muted)" }} axisLine={{ stroke: "var(--border)" }} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={34} tickFormatter={(v) => `${v}%`} />
+                <Tooltip formatter={(v: number, _n, p) => [`${v}% (${p.payload.total} questões)`, "Acerto"]} contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
+                <Line type="monotone" dataKey="acc" stroke={accent} strokeWidth={3} dot isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Por confiança */}
+      {byConfidence.size > 0 && (
+        <div style={{ marginBottom: bancaChart.length > 0 ? "1.25rem" : 0 }}>
+          <h4 style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.6rem" }}>Por nível de confiança</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {(Object.keys(confidenceConfig) as StudyConfidence[]).map((c) => {
+              const v = byConfidence.get(c);
+              if (!v) return null;
+              const a = pct(v.correct, v.total);
+              return (
+                <div key={c} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                  <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)" }}>{confidenceConfig[c].emoji} {confidenceConfig[c].label}</span>
+                  <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{v.total}q</span>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 700, color: accuracyColor(a), minWidth: 36, textAlign: "right" }}>{a}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Por banca */}
+      {bancaChart.length > 0 && (
+        <div>
+          <h4 style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.6rem" }}>Por banca</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {bancaChart.map((b) => (
+              <div key={b.label} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                <span style={{ flex: 1, fontSize: "0.82rem", color: "var(--text-secondary)" }}>{b.label}</span>
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{b.total}q</span>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: accuracyColor(b.acc), minWidth: 36, textAlign: "right" }}>{b.acc}%</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
