@@ -1,11 +1,17 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit,
+  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
-import type { FamilyMember, StudySubject, StudyTopic, StudyLog, StudyConfidence } from "@/types";
+import type {
+  FamilyMember, StudySubject, StudyTopic, StudyLog, StudyConfidence,
+  StudyEdital, StudyQuestion, StudySimulado, QuestionFormat, QuestionAlternative,
+} from "@/types";
 import { AnalisesEstudos } from "@/components/estudos/AnalisesEstudos";
+import { QuestionBank } from "@/components/estudos/QuestionBank";
+import { Simulados } from "@/components/estudos/Simulados";
+import { ResumoDoDia } from "@/components/estudos/ResumoDoDia";
 
 const ACCENT = "#5b7fd4";
 
@@ -29,7 +35,10 @@ export default function EstudosPage() {
   const [subjects, setSubjects] = useState<StudySubject[]>([]);
   const [topics, setTopics] = useState<StudyTopic[]>([]);
   const [logs, setLogs] = useState<StudyLog[]>([]);
-  const [view, setView] = useState<"praticar" | "indicadores">("praticar");
+  const [editais, setEditais] = useState<StudyEdital[]>([]);
+  const [questions, setQuestions] = useState<StudyQuestion[]>([]);
+  const [simulados, setSimulados] = useState<StudySimulado[]>([]);
+  const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "indicadores">("praticar");
 
   const [studentId, setStudentId] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -101,6 +110,27 @@ export default function EstudosPage() {
       .eq("family_id", me.family_id)
       .order("created_at", { ascending: false });
     setLogs(logRows ?? []);
+
+    const { data: editalRows } = await supabase
+      .from("acalanto_study_editais")
+      .select("*")
+      .eq("family_id", me.family_id)
+      .order("created_at");
+    setEditais(editalRows ?? []);
+
+    const { data: questionRows } = await supabase
+      .from("acalanto_study_questions")
+      .select("*")
+      .eq("family_id", me.family_id)
+      .order("created_at", { ascending: false });
+    setQuestions(questionRows ?? []);
+
+    const { data: simuladoRows } = await supabase
+      .from("acalanto_study_simulados")
+      .select("*")
+      .eq("family_id", me.family_id)
+      .order("created_at", { ascending: false });
+    setSimulados(simuladoRows ?? []);
 
     setLoading(false);
   }
@@ -206,6 +236,134 @@ export default function EstudosPage() {
     setSessionStats({ count: 0, correct: 0 });
   }
 
+  async function addEdital(input: { name: string; banca: string; formatoPadrao: QuestionFormat; pontosCerto: number; pontosErrado: number; pontosBranco: number }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: StudyEdital = {
+      id, family_id: familyId, member_id: studentId || null, name: input.name,
+      banca: input.banca || null, formato_padrao: input.formatoPadrao,
+      pontos_certo: input.pontosCerto, pontos_errado: input.pontosErrado, pontos_branco: input.pontosBranco,
+      created_at: new Date().toISOString(),
+    };
+    setEditais((prev) => [...prev, row]);
+    showToast(`✓ Edital "${input.name}" criado!`);
+    const { error } = await supabase.from("acalanto_study_editais").insert({
+      id, family_id: familyId, member_id: studentId || null, name: input.name,
+      banca: input.banca || null, formato_padrao: input.formatoPadrao,
+      pontos_certo: input.pontosCerto, pontos_errado: input.pontosErrado, pontos_branco: input.pontosBranco,
+    });
+    if (error) { setEditais((prev) => prev.filter((e) => e.id !== id)); showToast("Erro ao criar edital"); }
+  }
+
+  async function removeEdital(edital: StudyEdital) {
+    const supabase = createClient();
+    setEditais((prev) => prev.filter((e) => e.id !== edital.id));
+    await supabase.from("acalanto_study_editais").delete().eq("id", edital.id);
+  }
+
+  async function saveQuestion(input: {
+    id?: string; subjectId: string; topicId: string | null; editalId: string | null; format: QuestionFormat;
+    statement: string; alternatives: QuestionAlternative[] | null; correctAnswer: string;
+    explanation: string | null; mnemonic: string | null; mindMap: string | null;
+  }) {
+    const supabase = createClient();
+    const patch = {
+      subject_id: input.subjectId, topic_id: input.topicId, edital_id: input.editalId, format: input.format,
+      statement: input.statement, alternatives: input.alternatives, correct_answer: input.correctAnswer,
+      explanation: input.explanation, mnemonic: input.mnemonic, mind_map: input.mindMap,
+    };
+    if (input.id) {
+      setQuestions((prev) => prev.map((q) => q.id === input.id ? { ...q, ...patch } : q));
+      showToast("✓ Questão atualizada!");
+      const { error } = await supabase.from("acalanto_study_questions").update(patch).eq("id", input.id);
+      if (error) showToast("Erro ao salvar questão");
+    } else {
+      const id = crypto.randomUUID();
+      const row: StudyQuestion = { id, family_id: familyId, created_at: new Date().toISOString(), ...patch };
+      setQuestions((prev) => [row, ...prev]);
+      showToast("✓ Questão adicionada!");
+      const { error } = await supabase.from("acalanto_study_questions").insert({ id, family_id: familyId, ...patch });
+      if (error) { setQuestions((prev) => prev.filter((q) => q.id !== id)); showToast("Erro ao adicionar questão"); }
+    }
+  }
+
+  async function removeQuestion(question: StudyQuestion) {
+    const supabase = createClient();
+    setQuestions((prev) => prev.filter((q) => q.id !== question.id));
+    await supabase.from("acalanto_study_questions").delete().eq("id", question.id);
+  }
+
+  async function createSimulado(input: { name: string; editalId: string | null; subjectIds: string[]; quantity: number }): Promise<StudySimulado | null> {
+    const pool = input.subjectIds.length ? questions.filter((q) => input.subjectIds.includes(q.subject_id)) : questions;
+    if (pool.length === 0) { showToast("Nenhuma questão disponível com esse filtro"); return null; }
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, Math.min(input.quantity, shuffled.length));
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: StudySimulado = {
+      id, family_id: familyId, member_id: studentId || null, edital_id: input.editalId, name: input.name,
+      question_ids: selected.map((q) => q.id), answers: {}, started_at: new Date().toISOString(),
+      finished_at: null, score: null, max_score: null, created_at: new Date().toISOString(),
+    };
+    setSimulados((prev) => [row, ...prev]);
+    const { error } = await supabase.from("acalanto_study_simulados").insert({
+      id, family_id: familyId, member_id: studentId || null, edital_id: input.editalId, name: input.name,
+      question_ids: row.question_ids, answers: {}, started_at: row.started_at,
+    });
+    if (error) { setSimulados((prev) => prev.filter((s) => s.id !== id)); showToast("Erro ao montar simulado"); return null; }
+    return row;
+  }
+
+  async function submitSimulado(simulado: StudySimulado, answers: Record<string, string | null>): Promise<StudySimulado | null> {
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+    const edital = simulado.edital_id ? editais.find((e) => e.id === simulado.edital_id) : null;
+    const pontosCerto = edital?.pontos_certo ?? 1;
+    const pontosErrado = edital?.pontos_errado ?? 0;
+    const pontosBranco = edital?.pontos_branco ?? 0;
+
+    let score = 0;
+    const newLogs: StudyLog[] = [];
+    simulado.question_ids.forEach((qid) => {
+      const q = questionMap.get(qid);
+      if (!q) return;
+      const given = answers[qid] ?? null;
+      if (given == null) { score += pontosBranco; return; }
+      const correct = given === q.correct_answer;
+      score += correct ? pontosCerto : pontosErrado;
+      newLogs.push({
+        id: crypto.randomUUID(), family_id: familyId, member_id: simulado.member_id, subject_id: q.subject_id,
+        topic_id: q.topic_id, correct, banca: edital?.banca ?? null, confidence: null, note: null,
+        date: todayStr(), created_at: new Date().toISOString(),
+      });
+    });
+    const maxScore = simulado.question_ids.length * pontosCerto;
+    const finishedAt = new Date().toISOString();
+    const updated: StudySimulado = { ...simulado, answers, finished_at: finishedAt, score, max_score: maxScore };
+
+    setSimulados((prev) => prev.map((s) => s.id === simulado.id ? updated : s));
+    setLogs((prev) => [...newLogs, ...prev]);
+
+    const supabase = createClient();
+    const { error } = await supabase.from("acalanto_study_simulados").update({
+      answers, finished_at: finishedAt, score, max_score: maxScore,
+    }).eq("id", simulado.id);
+    if (error) { showToast("Erro ao salvar resultado do simulado"); return null; }
+    if (newLogs.length) {
+      await supabase.from("acalanto_study_logs").insert(newLogs.map((l) => ({
+        id: l.id, family_id: l.family_id, member_id: l.member_id, subject_id: l.subject_id,
+        topic_id: l.topic_id, correct: l.correct, banca: l.banca, confidence: l.confidence, date: l.date,
+      })));
+    }
+    showToast(`🏁 Simulado finalizado: ${score}/${maxScore} pts`);
+    return updated;
+  }
+
+  async function removeSimulado(simulado: StudySimulado) {
+    const supabase = createClient();
+    setSimulados((prev) => prev.filter((s) => s.id !== simulado.id));
+    await supabase.from("acalanto_study_simulados").delete().eq("id", simulado.id);
+  }
+
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
   const topicMap = new Map(topics.map((t) => [t.id, t]));
   const memberMap = new Map(members.map((m) => [m.id, m]));
@@ -239,37 +397,62 @@ export default function EstudosPage() {
           🎓 Estudos
         </h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
-          {view === "praticar" ? "Registre as questões que você resolveu" : "Seus indicadores de desempenho"}
+          {view === "praticar" ? "Registre as questões que você resolveu"
+            : view === "questoes" ? "Seu banco de questões"
+            : view === "simulados" ? "Simulados e avaliações"
+            : "Seus indicadores de desempenho"}
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
-        <button
-          onClick={() => setView("praticar")}
-          style={{
-            flex: 1, padding: "0.55rem 0", borderRadius: 10, border: "none", cursor: "pointer",
-            fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
-            background: view === "praticar" ? ACCENT : "var(--bg-secondary)",
-            color: view === "praticar" ? "#fff" : "var(--text-muted)",
-          }}
-        >
-          <MdSchool size={16} /> Praticar
-        </button>
-        <button
-          onClick={() => setView("indicadores")}
-          style={{
-            flex: 1, padding: "0.55rem 0", borderRadius: 10, border: "none", cursor: "pointer",
-            fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
-            background: view === "indicadores" ? ACCENT : "var(--bg-secondary)",
-            color: view === "indicadores" ? "#fff" : "var(--text-muted)",
-          }}
-        >
-          <MdBarChart size={16} /> Indicadores
-        </button>
+      <div style={{ display: "flex", gap: "0.4rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
+        {([
+          { id: "praticar" as const, label: "Praticar", icon: MdSchool },
+          { id: "questoes" as const, label: "Questões", icon: MdEditNote },
+          { id: "simulados" as const, label: "Simulados", icon: MdQuiz },
+          { id: "indicadores" as const, label: "Indicadores", icon: MdBarChart },
+        ]).map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            style={{
+              flex: 1, minWidth: 110, padding: "0.55rem 0", borderRadius: 10, border: "none", cursor: "pointer",
+              fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
+              background: view === id ? ACCENT : "var(--bg-secondary)",
+              color: view === id ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            <Icon size={16} /> {label}
+          </button>
+        ))}
       </div>
+
+      {(view === "praticar" || view === "questoes") && (
+        <div style={{ marginBottom: "1.25rem" }}>
+          <ResumoDoDia
+            subjects={subjects} topics={topics} questions={questions} logs={logs} accent={ACCENT}
+            onSelectTopic={(sId, tId) => { setSubjectId(sId); setTopicId(tId ?? ""); setView("praticar"); }}
+          />
+        </div>
+      )}
 
       {view === "indicadores" && (
         <AnalisesEstudos subjects={subjects} topics={topics} logs={logs} members={members} accent={ACCENT} />
+      )}
+
+      {view === "questoes" && (
+        <QuestionBank
+          subjects={subjects} topics={topics} editais={editais} questions={questions} accent={ACCENT}
+          onAddEdital={addEdital} onRemoveEdital={removeEdital}
+          onSaveQuestion={saveQuestion} onRemoveQuestion={removeQuestion}
+        />
+      )}
+
+      {view === "simulados" && (
+        <Simulados
+          subjects={subjects} topics={topics} editais={editais} questions={questions} simulados={simulados}
+          members={members} studentId={studentId} accent={ACCENT}
+          onCreateSimulado={createSimulado} onSubmitSimulado={submitSimulado} onRemoveSimulado={removeSimulado}
+        />
       )}
 
       {view === "praticar" && (

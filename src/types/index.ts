@@ -253,3 +253,54 @@ export interface StudyLog {
   date: string;
   created_at: string;
 }
+
+export type QuestionFormat = "certo_errado" | "multipla_escolha";
+
+export interface StudyEdital {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  name: string;
+  banca?: string | null;
+  formato_padrao: QuestionFormat;
+  pontos_certo: number;
+  pontos_errado: number;
+  pontos_branco: number;
+  created_at: string;
+}
+
+export interface QuestionAlternative {
+  key: string;
+  text: string;
+}
+
+export interface StudyQuestion {
+  id: string;
+  family_id: string;
+  subject_id: string;
+  topic_id: string | null;
+  edital_id: string | null;
+  format: QuestionFormat;
+  statement: string;
+  alternatives?: QuestionAlternative[] | null;
+  correct_answer: string;
+  explanation?: string | null;
+  mnemonic?: string | null;
+  mind_map?: string | null;
+  created_at: string;
+}
+
+export interface StudySimulado {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  edital_id: string | null;
+  name: string;
+  question_ids: string[];
+  answers: Record<string, string | null>;
+  started_at: string;
+  finished_at: string | null;
+  score: number | null;
+  max_score: number | null;
+  created_at: string;
+}
