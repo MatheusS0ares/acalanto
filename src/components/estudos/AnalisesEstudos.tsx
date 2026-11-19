@@ -5,13 +5,17 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { MdTrendingUp, MdTrendingDown, MdLocalFireDepartment, MdPriorityHigh, MdInsights, MdClose } from "react-icons/md";
-import type { StudySubject, StudyTopic, StudyLog, FamilyMember, StudyConfidence } from "@/types";
+import type { StudySubject, StudyTopic, StudyLog, FamilyMember, StudyConfidence, StudySimulado, StudyQuestion } from "@/types";
+import { buildGameState, calcSubjectRanking, getDailyGoal } from "@/lib/estudos/gamification";
+import { BadgesGrid, SubjectLeaderboard } from "@/components/estudos/Conquistas";
 
 interface Props {
   subjects: StudySubject[];
   topics: StudyTopic[];
   logs: StudyLog[];
   members: FamilyMember[];
+  simulados: StudySimulado[];
+  questions: StudyQuestion[];
   accent: string;
 }
 
@@ -47,7 +51,7 @@ function weekKey(d: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Props) {
+export function AnalisesEstudos({ subjects, topics, logs, members, simulados, questions, accent }: Props) {
   const [readerFilter, setReaderFilter] = useState<string>("all");
   const [period, setPeriod] = useState<Period>("30d");
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
@@ -91,6 +95,9 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
+
+  const game = buildGameState(byReader, simulados, questions, getDailyGoal());
+  const subjectRanking = calcSubjectRanking(scoped, subjects);
 
   // Acerto por matéria
   const bySubject = new Map<string, { label: string; emoji: string; total: number; correct: number }>();
@@ -211,6 +218,15 @@ export function AnalisesEstudos({ subjects, topics, logs, members, accent }: Pro
           <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.4rem" }}>Matérias ativas</div>
           <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--text-primary)" }}>{activeSubjects}</div>
         </div>
+        <div className="card" style={{ padding: "1rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.4rem" }}>Nível</div>
+          <div style={{ fontSize: "1.25rem", fontWeight: 800, color: accent }}>{game.level.level} <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600 }}>({game.xp} XP)</span></div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "1.25rem" }}>
+        <BadgesGrid unlockedKeys={game.unlockedKeys} />
+        <SubjectLeaderboard ranking={subjectRanking} />
       </div>
 
       {/* Acerto por matéria */}

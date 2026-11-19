@@ -15,6 +15,9 @@ import { Simulados } from "@/components/estudos/Simulados";
 import { ResumoDoDia } from "@/components/estudos/ResumoDoDia";
 import { NotesChecklist } from "@/components/estudos/NotesChecklist";
 import { ImportCaderno, type ImportPayload } from "@/components/estudos/ImportCaderno";
+import { GameBar } from "@/components/estudos/GameBar";
+import { AnswerFeedback, type FeedbackEvent } from "@/components/estudos/AnswerFeedback";
+import { buildGameState, getDailyGoal, DEFAULT_DAILY_GOAL, XP_PER_CORRECT, XP_PER_WRONG } from "@/lib/estudos/gamification";
 
 const ACCENT = "#5b7fd4";
 
@@ -44,6 +47,12 @@ export default function EstudosPage() {
   const [notes, setNotes] = useState<StudyNote[]>([]);
   const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "notas" | "indicadores">("praticar");
   const [importModal, setImportModal] = useState(false);
+  const [dailyGoal, setDailyGoalState] = useState(DEFAULT_DAILY_GOAL);
+  const [feedbackEvent, setFeedbackEvent] = useState<FeedbackEvent | null>(null);
+
+  useEffect(() => {
+    setDailyGoalState(getDailyGoal());
+  }, []);
 
   const [studentId, setStudentId] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -222,6 +231,7 @@ export default function EstudosPage() {
       showToast("Erro ao registrar questão");
       return;
     }
+    setFeedbackEvent({ id: Date.now(), correct, xp: correct ? XP_PER_CORRECT : XP_PER_WRONG });
     if (!correct) {
       showToast("❌ Registrado — toque aqui pra anotar o motivo");
       setNoteModal(row);
@@ -517,6 +527,7 @@ export default function EstudosPage() {
   const topicMap = new Map(topics.map((t) => [t.id, t]));
   const memberMap = new Map(members.map((m) => [m.id, m]));
   const bancaOptions = Array.from(new Set(logs.map((l) => l.banca).filter((b): b is string => !!b?.trim())));
+  const game = useMemo(() => buildGameState(logs, simulados, questions, dailyGoal), [logs, simulados, questions, dailyGoal]);
 
   const recentLogs = logs.slice(0, 20);
 
@@ -564,6 +575,9 @@ export default function EstudosPage() {
         </button>
       </div>
 
+      <GameBar game={game} accent={ACCENT} onGoalChange={setDailyGoalState} />
+      <AnswerFeedback event={feedbackEvent} onDone={() => setFeedbackEvent(null)} />
+
       <div style={{ display: "flex", gap: "0.4rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
         {([
           { id: "praticar" as const, label: "Praticar", icon: MdSchool },
@@ -597,7 +611,7 @@ export default function EstudosPage() {
       )}
 
       {view === "indicadores" && (
-        <AnalisesEstudos subjects={subjects} topics={topics} logs={logs} members={members} accent={ACCENT} />
+        <AnalisesEstudos subjects={subjects} topics={topics} logs={logs} members={members} simulados={simulados} questions={questions} accent={ACCENT} />
       )}
 
       {view === "questoes" && (
