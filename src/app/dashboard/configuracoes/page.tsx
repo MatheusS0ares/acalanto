@@ -159,8 +159,10 @@ function SenhaModal({ onClose, onSave }: { onClose: () => void; onSave: () => vo
     if (nova.length < 6) { setErro("A nova senha deve ter pelo menos 6 caracteres"); return; }
     if (nova !== confirma) { setErro("As senhas não coincidem"); return; }
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 600));
+    const supabase = createClient();
+    const { error } = await supabase.auth.updateUser({ password: nova });
     setSaving(false);
+    if (error) { setErro("Não foi possível alterar a senha. Tente novamente."); return; }
     onSave();
   }
 
