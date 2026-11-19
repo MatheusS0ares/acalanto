@@ -1,7 +1,8 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MdAdd, MdClose, MdCheck, MdPlayArrow, MdDelete, MdEmojiEvents } from "react-icons/md";
 import type { StudySubject, StudyTopic, StudyEdital, StudyQuestion, StudySimulado, FamilyMember } from "@/types";
+import { XP_PER_CORRECT, XP_PER_WRONG } from "@/lib/estudos/gamification";
 
 interface Props {
   subjects: StudySubject[];
@@ -15,16 +16,29 @@ interface Props {
   onCreateSimulado: (input: { name: string; editalId: string | null; subjectIds: string[]; quantity: number }) => Promise<StudySimulado | null>;
   onSubmitSimulado: (simulado: StudySimulado, answers: Record<string, string | null>) => Promise<StudySimulado | null>;
   onRemoveSimulado: (simulado: StudySimulado) => void;
+  focusSimuladoId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 function fmtScore(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-export function Simulados({ subjects, topics, editais, questions, simulados, members, studentId, accent, onCreateSimulado, onSubmitSimulado, onRemoveSimulado }: Props) {
+export function Simulados({ subjects, topics, editais, questions, simulados, members, studentId, accent, onCreateSimulado, onSubmitSimulado, onRemoveSimulado, focusSimuladoId, onFocusHandled }: Props) {
   const [mode, setMode] = useState<"list" | "building" | "taking" | "review">("list");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string | null>>({});
+
+  useEffect(() => {
+    if (!focusSimuladoId) return;
+    const s = simulados.find((x) => x.id === focusSimuladoId);
+    if (!s) return;
+    setActiveId(s.id);
+    setAnswers(s.answers ?? {});
+    setMode(s.finished_at ? "review" : "taking");
+    onFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSimuladoId]);
 
   const [buildName, setBuildName] = useState("");
   const [buildEditalId, setBuildEditalId] = useState("");
@@ -251,17 +265,57 @@ export function Simulados({ subjects, topics, editais, questions, simulados, mem
   // review
   const total = active.question_ids.length;
   const correctCount = active.question_ids.filter((qid) => active.answers[qid] != null && questionMap.get(qid)?.correct_answer === active.answers[qid]).length;
+  const blankCount = active.question_ids.filter((qid) => active.answers[qid] == null).length;
+  const wrongCount = total - correctCount - blankCount;
+  const xpEarned = correctCount * XP_PER_CORRECT + wrongCount * XP_PER_WRONG;
   const acc = total ? Math.round((correctCount / total) * 100) : 0;
+  const celebration = acc >= 90
+    ? { emoji: "🏆", title: "Excelente!", color: "#c99a40" }
+    : acc >= 70
+    ? { emoji: "🎉", title: "Muito bem!", color: "#7aab8a" }
+    : acc >= 50
+    ? { emoji: "💪", title: "Pode melhorar!", color: "#5b7fd4" }
+    : { emoji: "📚", title: "Hora de revisar!", color: "#d06a6a" };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <div className="card" style={{ padding: "1.25rem", border: `1.5px solid ${accent}`, textAlign: "center" }}>
-        <MdEmojiEvents size={32} color="#c99a40" />
-        <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--text-primary)", marginTop: "0.4rem" }}>
+      <div className="card simulado-celebrate" style={{ padding: "1.5rem", border: `1.5px solid ${celebration.color}`, textAlign: "center", position: "relative", overflow: "hidden" }}>
+        {acc >= 70 && (
+          <div style={{ position: "absolute", inset: 0, pointerEvents: "none", display: "flex", justifyContent: "space-around", top: "-0.5rem" }}>
+            {["🎉", "✨", "🎊", "✨", "🎉"].map((e, i) => (
+              <span key={i} className="confetti-fall" style={{ animationDelay: `${i * 0.15}s`, fontSize: "1.1rem" }}>{e}</span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: "2.2rem" }} className="celebrate-bounce">{celebration.emoji}</div>
+        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: celebration.color, marginTop: "0.2rem" }}>{celebration.title}</div>
+        <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--text-primary)", marginTop: "0.5rem" }}>
           {active.score != null ? `${fmtScore(active.score)} / ${fmtScore(active.max_score ?? 0)} pontos` : `${correctCount}/${total}`}
         </div>
         <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{correctCount} de {total} corretas ({acc}%)</div>
-        <button onClick={() => setMode("list")} className="btn-secondary" style={{ marginTop: "0.9rem", justifyContent: "center" }}>Voltar aos simulados</button>
+        {xpEarned > 0 && (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", marginTop: "0.6rem", background: "var(--bg-secondary)", padding: "0.3rem 0.8rem", borderRadius: 999, fontSize: "0.8rem", fontWeight: 800, color: accent }}>
+            <MdEmojiEvents size={16} /> +{xpEarned} XP
+          </div>
+        )}
+        <div>
+          <button onClick={() => setMode("list")} className="btn-secondary" style={{ marginTop: "0.9rem", justifyContent: "center" }}>Voltar aos simulados</button>
+        </div>
       </div>
+
+      <style>{`
+        @keyframes celebrateBounce {
+          0% { transform: scale(0.4) rotate(-10deg); opacity: 0; }
+          60% { transform: scale(1.15) rotate(4deg); opacity: 1; }
+          100% { transform: scale(1) rotate(0deg); }
+        }
+        .celebrate-bounce { animation: celebrateBounce 0.6s cubic-bezier(.34,1.56,.64,1) both; display: inline-block; }
+        @keyframes confettiFall {
+          0% { transform: translateY(-14px) rotate(0deg); opacity: 0; }
+          20% { opacity: 1; }
+          100% { transform: translateY(40px) rotate(60deg); opacity: 0; }
+        }
+        .confetti-fall { animation: confettiFall 1.6s ease-in infinite; }
+      `}</style>
 
       {active.question_ids.map((qid, idx) => {
         const q = questionMap.get(qid);
