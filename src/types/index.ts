@@ -304,3 +304,19 @@ export interface StudySimulado {
   max_score: number | null;
   created_at: string;
 }
+
+export type StudyNoteType = "nota" | "checklist";
+
+export interface StudyNote {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  edital_id: string | null;
+  subject_id: string | null;
+  type: StudyNoteType;
+  title: string;
+  content: string | null;
+  done: boolean;
+  due_date: string | null;
+  created_at: string;
+}

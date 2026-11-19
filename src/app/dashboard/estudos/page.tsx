@@ -1,17 +1,19 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote,
+  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote, MdChecklist,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type {
   FamilyMember, StudySubject, StudyTopic, StudyLog, StudyConfidence,
   StudyEdital, StudyQuestion, StudySimulado, QuestionFormat, QuestionAlternative,
+  StudyNote, StudyNoteType,
 } from "@/types";
 import { AnalisesEstudos } from "@/components/estudos/AnalisesEstudos";
 import { QuestionBank } from "@/components/estudos/QuestionBank";
 import { Simulados } from "@/components/estudos/Simulados";
 import { ResumoDoDia } from "@/components/estudos/ResumoDoDia";
+import { NotesChecklist } from "@/components/estudos/NotesChecklist";
 
 const ACCENT = "#5b7fd4";
 
@@ -38,7 +40,8 @@ export default function EstudosPage() {
   const [editais, setEditais] = useState<StudyEdital[]>([]);
   const [questions, setQuestions] = useState<StudyQuestion[]>([]);
   const [simulados, setSimulados] = useState<StudySimulado[]>([]);
-  const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "indicadores">("praticar");
+  const [notes, setNotes] = useState<StudyNote[]>([]);
+  const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "notas" | "indicadores">("praticar");
 
   const [studentId, setStudentId] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -131,6 +134,13 @@ export default function EstudosPage() {
       .eq("family_id", me.family_id)
       .order("created_at", { ascending: false });
     setSimulados(simuladoRows ?? []);
+
+    const { data: noteRows } = await supabase
+      .from("acalanto_study_notes")
+      .select("*")
+      .eq("family_id", me.family_id)
+      .order("created_at", { ascending: false });
+    setNotes(noteRows ?? []);
 
     setLoading(false);
   }
@@ -364,6 +374,36 @@ export default function EstudosPage() {
     await supabase.from("acalanto_study_simulados").delete().eq("id", simulado.id);
   }
 
+  async function addNote(input: { type: StudyNoteType; title: string; content: string | null; dueDate: string | null; subjectId: string | null; editalId: string | null }) {
+    const supabase = createClient();
+    const id = crypto.randomUUID();
+    const row: StudyNote = {
+      id, family_id: familyId, member_id: studentId || null, edital_id: input.editalId, subject_id: input.subjectId,
+      type: input.type, title: input.title, content: input.content, done: false, due_date: input.dueDate,
+      created_at: new Date().toISOString(),
+    };
+    setNotes((prev) => [row, ...prev]);
+    showToast(input.type === "checklist" ? "✓ Item adicionado!" : "✓ Nota adicionada!");
+    const { error } = await supabase.from("acalanto_study_notes").insert({
+      id, family_id: familyId, member_id: studentId || null, edital_id: input.editalId, subject_id: input.subjectId,
+      type: input.type, title: input.title, content: input.content, done: false, due_date: input.dueDate,
+    });
+    if (error) { setNotes((prev) => prev.filter((n) => n.id !== id)); showToast("Erro ao adicionar"); }
+  }
+
+  async function toggleNoteDone(note: StudyNote) {
+    const supabase = createClient();
+    const done = !note.done;
+    setNotes((prev) => prev.map((n) => n.id === note.id ? { ...n, done } : n));
+    await supabase.from("acalanto_study_notes").update({ done }).eq("id", note.id);
+  }
+
+  async function removeNote(note: StudyNote) {
+    const supabase = createClient();
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+    await supabase.from("acalanto_study_notes").delete().eq("id", note.id);
+  }
+
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
   const topicMap = new Map(topics.map((t) => [t.id, t]));
   const memberMap = new Map(members.map((m) => [m.id, m]));
@@ -400,6 +440,7 @@ export default function EstudosPage() {
           {view === "praticar" ? "Registre as questões que você resolveu"
             : view === "questoes" ? "Seu banco de questões"
             : view === "simulados" ? "Simulados e avaliações"
+            : view === "notas" ? "Notas e checklist"
             : "Seus indicadores de desempenho"}
         </p>
       </div>
@@ -409,6 +450,7 @@ export default function EstudosPage() {
           { id: "praticar" as const, label: "Praticar", icon: MdSchool },
           { id: "questoes" as const, label: "Questões", icon: MdEditNote },
           { id: "simulados" as const, label: "Simulados", icon: MdQuiz },
+          { id: "notas" as const, label: "Notas", icon: MdChecklist },
           { id: "indicadores" as const, label: "Indicadores", icon: MdBarChart },
         ]).map(({ id, label, icon: Icon }) => (
           <button
@@ -452,6 +494,13 @@ export default function EstudosPage() {
           subjects={subjects} topics={topics} editais={editais} questions={questions} simulados={simulados}
           members={members} studentId={studentId} accent={ACCENT}
           onCreateSimulado={createSimulado} onSubmitSimulado={submitSimulado} onRemoveSimulado={removeSimulado}
+        />
+      )}
+
+      {view === "notas" && (
+        <NotesChecklist
+          notes={notes} subjects={subjects} editais={editais} accent={ACCENT}
+          onAddNote={addNote} onToggleDone={toggleNoteDone} onRemoveNote={removeNote}
         />
       )}
 
