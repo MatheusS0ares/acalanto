@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MdAdd, MdClose, MdCheck, MdPlayArrow, MdDelete, MdEmojiEvents } from "react-icons/md";
 import type { StudySubject, StudyTopic, StudyEdital, StudyQuestion, StudySimulado, FamilyMember } from "@/types";
 import { XP_PER_CORRECT, XP_PER_WRONG } from "@/lib/estudos/gamification";
@@ -16,16 +16,29 @@ interface Props {
   onCreateSimulado: (input: { name: string; editalId: string | null; subjectIds: string[]; quantity: number }) => Promise<StudySimulado | null>;
   onSubmitSimulado: (simulado: StudySimulado, answers: Record<string, string | null>) => Promise<StudySimulado | null>;
   onRemoveSimulado: (simulado: StudySimulado) => void;
+  focusSimuladoId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 function fmtScore(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-export function Simulados({ subjects, topics, editais, questions, simulados, members, studentId, accent, onCreateSimulado, onSubmitSimulado, onRemoveSimulado }: Props) {
+export function Simulados({ subjects, topics, editais, questions, simulados, members, studentId, accent, onCreateSimulado, onSubmitSimulado, onRemoveSimulado, focusSimuladoId, onFocusHandled }: Props) {
   const [mode, setMode] = useState<"list" | "building" | "taking" | "review">("list");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string | null>>({});
+
+  useEffect(() => {
+    if (!focusSimuladoId) return;
+    const s = simulados.find((x) => x.id === focusSimuladoId);
+    if (!s) return;
+    setActiveId(s.id);
+    setAnswers(s.answers ?? {});
+    setMode(s.finished_at ? "review" : "taking");
+    onFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSimuladoId]);
 
   const [buildName, setBuildName] = useState("");
   const [buildEditalId, setBuildEditalId] = useState("");

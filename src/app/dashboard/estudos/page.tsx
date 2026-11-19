@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote, MdChecklist, MdUploadFile,
+  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote, MdChecklist, MdUploadFile, MdMap,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -16,6 +16,7 @@ import { ResumoDoDia } from "@/components/estudos/ResumoDoDia";
 import { NotesChecklist } from "@/components/estudos/NotesChecklist";
 import { ImportCaderno, type ImportPayload } from "@/components/estudos/ImportCaderno";
 import { GameBar } from "@/components/estudos/GameBar";
+import { Trilha } from "@/components/estudos/Trilha";
 import { AnswerFeedback, type FeedbackEvent } from "@/components/estudos/AnswerFeedback";
 import { buildGameState, getDailyGoal, DEFAULT_DAILY_GOAL, XP_PER_CORRECT, XP_PER_WRONG } from "@/lib/estudos/gamification";
 
@@ -45,10 +46,11 @@ export default function EstudosPage() {
   const [questions, setQuestions] = useState<StudyQuestion[]>([]);
   const [simulados, setSimulados] = useState<StudySimulado[]>([]);
   const [notes, setNotes] = useState<StudyNote[]>([]);
-  const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "notas" | "indicadores">("praticar");
+  const [view, setView] = useState<"praticar" | "questoes" | "fases" | "simulados" | "notas" | "indicadores">("praticar");
   const [importModal, setImportModal] = useState(false);
   const [dailyGoal, setDailyGoalState] = useState(DEFAULT_DAILY_GOAL);
   const [feedbackEvent, setFeedbackEvent] = useState<FeedbackEvent | null>(null);
+  const [focusSimuladoId, setFocusSimuladoId] = useState<string | null>(null);
 
   useEffect(() => {
     setDailyGoalState(getDailyGoal());
@@ -315,8 +317,9 @@ export default function EstudosPage() {
     await supabase.from("acalanto_study_questions").delete().eq("id", question.id);
   }
 
-  async function createSimulado(input: { name: string; editalId: string | null; subjectIds: string[]; quantity: number }): Promise<StudySimulado | null> {
-    const pool = input.subjectIds.length ? questions.filter((q) => input.subjectIds.includes(q.subject_id)) : questions;
+  async function createSimulado(input: { name: string; editalId: string | null; subjectIds: string[]; topicIds?: (string | null)[]; quantity: number }): Promise<StudySimulado | null> {
+    let pool = input.subjectIds.length ? questions.filter((q) => input.subjectIds.includes(q.subject_id)) : questions;
+    if (input.topicIds && input.topicIds.length) pool = pool.filter((q) => input.topicIds!.includes(q.topic_id));
     if (pool.length === 0) { showToast("Nenhuma questão disponível com esse filtro"); return null; }
     const shuffled = [...pool].sort(() => Math.random() - 0.5);
     const selected = shuffled.slice(0, Math.min(input.quantity, shuffled.length));
@@ -334,6 +337,19 @@ export default function EstudosPage() {
     });
     if (error) { setSimulados((prev) => prev.filter((s) => s.id !== id)); showToast("Erro ao montar simulado"); return null; }
     return row;
+  }
+
+  async function playFase(subjectId: string, topicId: string | null, faseName: string) {
+    const pool = questions.filter((q) => q.subject_id === subjectId && q.topic_id === topicId);
+    if (pool.length === 0) { showToast("Essa fase ainda não tem questões"); return; }
+    const result = await createSimulado({
+      name: `${faseName} (fase)`, editalId: null, subjectIds: [subjectId], topicIds: [topicId],
+      quantity: Math.min(pool.length, 10),
+    });
+    if (result) {
+      setFocusSimuladoId(result.id);
+      setView("simulados");
+    }
   }
 
   async function submitSimulado(simulado: StudySimulado, answers: Record<string, string | null>): Promise<StudySimulado | null> {
@@ -560,6 +576,7 @@ export default function EstudosPage() {
           <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
             {view === "praticar" ? "Registre as questões que você resolveu"
               : view === "questoes" ? "Seu banco de questões"
+              : view === "fases" ? "Sua trilha de fases por matéria"
               : view === "simulados" ? "Simulados e avaliações"
               : view === "notas" ? "Notas e checklist"
               : "Seus indicadores de desempenho"}
@@ -582,6 +599,7 @@ export default function EstudosPage() {
         {([
           { id: "praticar" as const, label: "Praticar", icon: MdSchool },
           { id: "questoes" as const, label: "Questões", icon: MdEditNote },
+          { id: "fases" as const, label: "Fases", icon: MdMap },
           { id: "simulados" as const, label: "Simulados", icon: MdQuiz },
           { id: "notas" as const, label: "Notas", icon: MdChecklist },
           { id: "indicadores" as const, label: "Indicadores", icon: MdBarChart },
@@ -622,11 +640,16 @@ export default function EstudosPage() {
         />
       )}
 
+      {view === "fases" && (
+        <Trilha subjects={subjects} topics={topics} questions={questions} logs={logs} accent={ACCENT} onPlayFase={playFase} />
+      )}
+
       {view === "simulados" && (
         <Simulados
           subjects={subjects} topics={topics} editais={editais} questions={questions} simulados={simulados}
           members={members} studentId={studentId} accent={ACCENT}
           onCreateSimulado={createSimulado} onSubmitSimulado={submitSimulado} onRemoveSimulado={removeSimulado}
+          focusSimuladoId={focusSimuladoId} onFocusHandled={() => setFocusSimuladoId(null)}
         />
       )}
 
