@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote, MdChecklist,
+  MdAdd, MdClose, MdCheck, MdSchool, MdBarChart, MdDelete, MdEdit, MdQuiz, MdEditNote, MdChecklist, MdUploadFile,
 } from "react-icons/md";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -14,6 +14,7 @@ import { QuestionBank } from "@/components/estudos/QuestionBank";
 import { Simulados } from "@/components/estudos/Simulados";
 import { ResumoDoDia } from "@/components/estudos/ResumoDoDia";
 import { NotesChecklist } from "@/components/estudos/NotesChecklist";
+import { ImportCaderno, type ImportPayload } from "@/components/estudos/ImportCaderno";
 
 const ACCENT = "#5b7fd4";
 
@@ -42,6 +43,7 @@ export default function EstudosPage() {
   const [simulados, setSimulados] = useState<StudySimulado[]>([]);
   const [notes, setNotes] = useState<StudyNote[]>([]);
   const [view, setView] = useState<"praticar" | "questoes" | "simulados" | "notas" | "indicadores">("praticar");
+  const [importModal, setImportModal] = useState(false);
 
   const [studentId, setStudentId] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -404,6 +406,113 @@ export default function EstudosPage() {
     await supabase.from("acalanto_study_notes").delete().eq("id", note.id);
   }
 
+  async function importCaderno(payload: ImportPayload): Promise<boolean> {
+    const supabase = createClient();
+    const norm = (s: string) => s.trim().toLowerCase();
+
+    let editalRealId: string | null = null;
+    let newEdital: StudyEdital | null = null;
+    if (payload.edital) {
+      const existing = editais.find((e) => norm(e.name) === norm(payload.edital!.name));
+      if (existing) {
+        editalRealId = existing.id;
+      } else {
+        const id = crypto.randomUUID();
+        newEdital = {
+          id, family_id: familyId, member_id: studentId || null, name: payload.edital.name,
+          banca: payload.edital.banca || null, formato_padrao: payload.edital.formatoPadrao ?? "multipla_escolha",
+          pontos_certo: payload.edital.pontosCerto ?? 1, pontos_errado: payload.edital.pontosErrado ?? 0,
+          pontos_branco: payload.edital.pontosBranco ?? 0, created_at: new Date().toISOString(),
+        };
+        editalRealId = id;
+      }
+    }
+
+    const refToSubjectId = new Map<string, string>();
+    const newSubjects: StudySubject[] = [];
+    (payload.subjects ?? []).forEach((s) => {
+      const existing = subjects.find((x) => norm(x.name) === norm(s.name));
+      if (existing) { refToSubjectId.set(s.ref, existing.id); return; }
+      const id = crypto.randomUUID();
+      refToSubjectId.set(s.ref, id);
+      newSubjects.push({ id, family_id: familyId, member_id: studentId || null, name: s.name, emoji: s.emoji || "📘", created_at: new Date().toISOString() });
+    });
+
+    const refToTopicId = new Map<string, string>();
+    const newTopics: StudyTopic[] = [];
+    (payload.topics ?? []).forEach((t) => {
+      const subjectId = refToSubjectId.get(t.subjectRef);
+      if (!subjectId) return;
+      const existing = topics.find((x) => x.subject_id === subjectId && norm(x.name) === norm(t.name))
+        ?? newTopics.find((x) => x.subject_id === subjectId && norm(x.name) === norm(t.name));
+      if (existing) { refToTopicId.set(t.ref, existing.id); return; }
+      const id = crypto.randomUUID();
+      refToTopicId.set(t.ref, id);
+      newTopics.push({ id, family_id: familyId, subject_id: subjectId, name: t.name, created_at: new Date().toISOString() });
+    });
+
+    const newQuestions: StudyQuestion[] = (payload.questions ?? []).flatMap((q) => {
+      const subjectId = refToSubjectId.get(q.subjectRef);
+      if (!subjectId) return [];
+      const topicId = q.topicRef ? refToTopicId.get(q.topicRef) ?? null : null;
+      return [{
+        id: crypto.randomUUID(), family_id: familyId, subject_id: subjectId, topic_id: topicId,
+        edital_id: editalRealId, format: q.format, statement: q.statement,
+        alternatives: q.alternatives ?? null, correct_answer: q.correctAnswer,
+        explanation: q.explanation ?? null, mnemonic: q.mnemonic ?? null, mind_map: q.mindMap ?? null,
+        created_at: new Date().toISOString(),
+      }];
+    });
+
+    const newNotes: StudyNote[] = (payload.notes ?? []).map((n) => ({
+      id: crypto.randomUUID(), family_id: familyId, member_id: studentId || null,
+      edital_id: n.editalRef ? editalRealId : null,
+      subject_id: n.subjectRef ? refToSubjectId.get(n.subjectRef) ?? null : null,
+      type: n.type, title: n.title, content: n.content ?? null, done: false, due_date: n.dueDate ?? null,
+      created_at: new Date().toISOString(),
+    }));
+
+    if (newEdital) {
+      const { error } = await supabase.from("acalanto_study_editais").insert({
+        id: newEdital.id, family_id: newEdital.family_id, member_id: newEdital.member_id, name: newEdital.name,
+        banca: newEdital.banca, formato_padrao: newEdital.formato_padrao, pontos_certo: newEdital.pontos_certo,
+        pontos_errado: newEdital.pontos_errado, pontos_branco: newEdital.pontos_branco,
+      });
+      if (error) { showToast("Erro ao importar edital"); return false; }
+    }
+    if (newSubjects.length) {
+      const { error } = await supabase.from("acalanto_study_subjects").insert(newSubjects.map((s) => ({ id: s.id, family_id: s.family_id, member_id: s.member_id, name: s.name, emoji: s.emoji })));
+      if (error) { showToast("Erro ao importar matérias"); return false; }
+    }
+    if (newTopics.length) {
+      const { error } = await supabase.from("acalanto_study_topics").insert(newTopics.map((t) => ({ id: t.id, family_id: t.family_id, subject_id: t.subject_id, name: t.name })));
+      if (error) { showToast("Erro ao importar assuntos"); return false; }
+    }
+    if (newQuestions.length) {
+      const { error } = await supabase.from("acalanto_study_questions").insert(newQuestions.map((q) => ({
+        id: q.id, family_id: q.family_id, subject_id: q.subject_id, topic_id: q.topic_id, edital_id: q.edital_id,
+        format: q.format, statement: q.statement, alternatives: q.alternatives, correct_answer: q.correct_answer,
+        explanation: q.explanation, mnemonic: q.mnemonic, mind_map: q.mind_map,
+      })));
+      if (error) { showToast("Erro ao importar questões"); return false; }
+    }
+    if (newNotes.length) {
+      const { error } = await supabase.from("acalanto_study_notes").insert(newNotes.map((n) => ({
+        id: n.id, family_id: n.family_id, member_id: n.member_id, edital_id: n.edital_id, subject_id: n.subject_id,
+        type: n.type, title: n.title, content: n.content, done: n.done, due_date: n.due_date,
+      })));
+      if (error) { showToast("Erro ao importar notas"); return false; }
+    }
+
+    if (newEdital) setEditais((prev) => [...prev, newEdital!]);
+    if (newSubjects.length) setSubjects((prev) => [...prev, ...newSubjects]);
+    if (newTopics.length) setTopics((prev) => [...prev, ...newTopics]);
+    if (newQuestions.length) setQuestions((prev) => [...newQuestions, ...prev]);
+    if (newNotes.length) setNotes((prev) => [...newNotes, ...prev]);
+    showToast(`✓ Importado: ${newSubjects.length} matérias, ${newTopics.length} assuntos, ${newQuestions.length} questões, ${newNotes.length} notas`);
+    return true;
+  }
+
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
   const topicMap = new Map(topics.map((t) => [t.id, t]));
   const memberMap = new Map(members.map((m) => [m.id, m]));
@@ -432,17 +541,27 @@ export default function EstudosPage() {
         </div>
       )}
 
-      <div style={{ marginBottom: "1.25rem" }}>
-        <h1 style={{ fontSize: "1.6rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
-          🎓 Estudos
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
-          {view === "praticar" ? "Registre as questões que você resolveu"
-            : view === "questoes" ? "Seu banco de questões"
-            : view === "simulados" ? "Simulados e avaliações"
-            : view === "notas" ? "Notas e checklist"
-            : "Seus indicadores de desempenho"}
-        </p>
+      <div style={{ marginBottom: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.75rem" }}>
+        <div>
+          <h1 style={{ fontSize: "1.6rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
+            🎓 Estudos
+          </h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
+            {view === "praticar" ? "Registre as questões que você resolveu"
+              : view === "questoes" ? "Seu banco de questões"
+              : view === "simulados" ? "Simulados e avaliações"
+              : view === "notas" ? "Notas e checklist"
+              : "Seus indicadores de desempenho"}
+          </p>
+        </div>
+        <button
+          onClick={() => setImportModal(true)}
+          className="btn-secondary"
+          style={{ flexShrink: 0, padding: "0.5rem 0.75rem", fontSize: "0.8rem" }}
+          aria-label="Importar caderno"
+        >
+          <MdUploadFile size={16} /> Importar
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: "0.4rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
@@ -764,6 +883,10 @@ export default function EstudosPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {importModal && (
+        <ImportCaderno accent={ACCENT} onClose={() => setImportModal(false)} onImport={importCaderno} />
       )}
     </div>
   );
