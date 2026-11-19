@@ -100,9 +100,14 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.4rem", fontWeight: 500 }}>
-              Senha
-            </label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.4rem" }}>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 500 }}>
+                Senha
+              </label>
+              <Link href="/auth/esqueci-senha" style={{ fontSize: "0.78rem", color: "var(--brand)", textDecoration: "none", fontWeight: 500 }}>
+                Esqueci minha senha
+              </Link>
+            </div>
             <div style={{ position: "relative" }}>
               <MdLock
                 size={18}
